@@ -10,6 +10,9 @@
 #include "VkShaderParam.h"
 #include "Geometry.h"
 #include "VkCameraImage.h"
+#include "Texture.h"
+
+#define RENDER_CAMERA_IMAGE
 
 // ===================== global vars =================== //
 bool isCamPermission;                   // camera permission?
@@ -23,6 +26,8 @@ Geometry geometryLeft;                  // geometry 1
 Geometry geometryRight;                 // geometry 2
 VkCameraImage *cameraImageLeft;         // image 1
 VkCameraImage *cameraImageRight;        // image 2
+Texture textureLeft;                    // texture1
+Texture textureRight;                   // texture2
 // ===================== global vars =================== //
 
 std::vector<char> readFileFromAndroidRes(const std::string& filePath){
@@ -90,10 +95,19 @@ void initGeometry(){
             0, 1, 2, 0, 2, 3
     };
     VkHelper::initGeometryBuffers(vk.deviceInfo.physicalDevMemoProps, vk.deviceInfo.device, vk.cmdPool, vk.queueInfo.queue, geometryRight);
+
+#ifndef RENDER_CAMERA_IMAGE
+    //load texture
+    textureLeft.load(gApp->activity->assetManager, vk.deviceInfo.device, vk.deviceInfo.physicalDevMemoProps,
+                     vk.cmdPool, vk.queueInfo.queue, "texture/container.jpg");
+    textureRight.load(gApp->activity->assetManager, vk.deviceInfo.device, vk.deviceInfo.physicalDevMemoProps,
+                      vk.cmdPool, vk.queueInfo.queue, "texture/awesomeface.png");
+#endif
 }
 
-void updateDescriptorSets(VkCommandBuffer cmdBuffer){
+void updateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t side){
 
+#ifdef RENDER_CAMERA_IMAGE
     AHardwareBuffer *hb = imageReader->getLatestBuffer();
     if(nullptr == hb){
         Error("Can not read camera latest buffer!");
@@ -101,33 +115,34 @@ void updateDescriptorSets(VkCommandBuffer cmdBuffer){
     }
     cameraImageLeft->update(&vk, VK_IMAGE_USAGE_SAMPLED_BIT, VK_SHARING_MODE_EXCLUSIVE, hb);
 
-    VkDescriptorBufferInfo descBufferInfo = {
-            .buffer = geometryLeft.uniformBuffers[0],
-            .offset = 0,
-            .range = sizeof(UniformObject)
-    };
-
-    VkDescriptorImageInfo imageInfo1[] = {
+    VkDescriptorImageInfo imageInfo[] = {
             {
                     .sampler = cameraImageLeft->getSampler(),
                     .imageView = cameraImageLeft->getImgView(),
                     .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
             }
     };
+#else
+    VkDescriptorImageInfo imageInfo[] = {
+            {
+                    .sampler = side == 0 ? textureLeft.getSampler() : textureRight.getSampler(),
+                    .imageView = side == 0 ? textureLeft.getImgView() : textureRight.getImgView(),
+                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            }
+    };
+#endif
 
-//    VkDescriptorImageInfo imageInfo2[] = {
-//            {
-//                    .sampler = texture2.imageSampler,
-//                    .imageView = texture2.imageView,
-//                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-//            }
-//    };
+    VkDescriptorBufferInfo descBufferInfo = {
+            .buffer = geometryLeft.uniformBuffers[0],
+            .offset = 0,
+            .range = sizeof(UniformObject)
+    };
 
     VkWriteDescriptorSet writeDescSets[] = {
             {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .pNext = nullptr,
-                    .dstSet = vk.descriptorSets[0],
+                    .dstSet = vk.descriptorSets[side],
                     .dstBinding = 0,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
@@ -137,26 +152,22 @@ void updateDescriptorSets(VkCommandBuffer cmdBuffer){
             {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .pNext = nullptr,
-                    .dstSet = vk.descriptorSets[0],
+                    .dstSet = vk.descriptorSets[side],
                     .dstBinding = 1,
                     .dstArrayElement = 0,
-                    .descriptorCount = ARRAY_SIZE(imageInfo1),
+                    .descriptorCount = ARRAY_SIZE(imageInfo),
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .pImageInfo = imageInfo1
-            },
-//            {
-//                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-//                    .pNext = nullptr,
-//                    .dstSet = vk.descriptorSets[0],
-//                    .dstBinding = 2,
-//                    .dstArrayElement = 0,
-//                    .descriptorCount = ARRAY_SIZE(imageInfo2),
-//                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-//                    .pImageInfo = imageInfo2
-//            }
+                    .pImageInfo = imageInfo
+            }
     };
     vkUpdateDescriptorSets(vk.deviceInfo.device, ARRAY_SIZE(writeDescSets), writeDescSets, 0, nullptr);
 
+
+#ifdef RENDER_CAMERA_IMAGE
+    VkImage image = cameraImageLeft->getImg();
+#else
+    VkImage image = side == 0 ? textureLeft.getImg() : textureRight.getImg();
+#endif
     VkImageMemoryBarrier camFragBarrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -165,7 +176,7 @@ void updateDescriptorSets(VkCommandBuffer cmdBuffer){
     camFragBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     camFragBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL_KHR;
     camFragBarrier.dstQueueFamilyIndex = vk.queueInfo.presentQueueIndex;
-    camFragBarrier.image = cameraImageLeft != nullptr ? cameraImageLeft->getImg() : nullptr;
+    camFragBarrier.image = image;
     camFragBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     camFragBarrier.subresourceRange.baseMipLevel = 0;
     camFragBarrier.subresourceRange.levelCount = 1;
@@ -215,10 +226,14 @@ void initGraphics(){
     vk.framebuffers = static_cast<VkFramebuffer *>(malloc(sizeof(VkFramebuffer) * vk.framebufferCount));
     VkHelper::createFramebuffer(vk.deviceInfo.device, vk.renderPass, vk.swapchainParam.extent.width, vk.swapchainParam.extent.height,
                                 vk.framebufferCount, vk.swapchainImage.views, vk.framebuffers);
+#ifdef RENDER_CAMERA_IMAGE
     initCameraImage();
     VkHelper::createDescriptorSetLayout(vk.deviceInfo.device, cameraImageLeft->getSampler(), &vk.descriptorSetLayout);
+#else
+    VkHelper::createDescriptorSetLayout(vk.deviceInfo.device, nullptr, &vk.descriptorSetLayout);
+#endif
     VkHelper::createDescriptorPool(vk.deviceInfo.device, &vk.descriptorPool);
-    vk.descriptorSets = static_cast<VkDescriptorSet *>(malloc(sizeof(VkDescriptorSet) * 1));
+    vk.descriptorSets = static_cast<VkDescriptorSet *>(malloc(sizeof(VkDescriptorSet) * 2));
     VkHelper::allocateDescriptorSets(vk.deviceInfo.device, vk.descriptorPool, vk.descriptorSetLayout, vk.descriptorSets);
     VkHelper::createPipelineLayout(vk.deviceInfo.device, vk.descriptorSetLayout, &vk.pipelineLayout);
     auto vertexShaderCode = readFileFromAndroidRes("shaders/demo001.vert.spv");
@@ -244,7 +259,9 @@ void initGraphics(){
 
 void startRender(struct android_app *app){
     gApp = app;
+#ifdef RENDER_CAMERA_IMAGE
     initCamera();
+#endif
     initGraphics();
 
     //change running state
@@ -254,6 +271,8 @@ void startRender(struct android_app *app){
 void stopRender(){
     isRunning = false;
     vkDeviceWaitIdle(vk.deviceInfo.device);
+    textureLeft.destroy(vk.deviceInfo.device);
+    textureRight.destroy(vk.deviceInfo.device);
     geometryRight.destroy(vk.deviceInfo.device);
     geometryLeft.destroy(vk.deviceInfo.device);
     vkFreeDescriptorSets(vk.deviceInfo.device, vk.descriptorPool, 1, vk.descriptorSets);
@@ -312,8 +331,6 @@ void processRenderFrame(){
     };
     CALL_VK(vkBeginCommandBuffer(vk.cmdBuffers[imageIndex], &cmdBufferBeginInfo));
 
-    updateDescriptorSets(vk.cmdBuffers[imageIndex]);
-
     VkClearValue defaultClearValues = { 0.1f,  0.1f,  0.2f,  1.0f};
     VkRenderPassBeginInfo renderPassBeginInfo = {
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -332,10 +349,15 @@ void processRenderFrame(){
 
     vkCmdBindPipeline(vk.cmdBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, vk.graphicPipeline);
 
+    updateDescriptorSets(vk.cmdBuffers[imageIndex], 0);
     if(vk.descriptorSets != VK_NULL_HANDLE){
-        vkCmdBindDescriptorSets(vk.cmdBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipelineLayout, 0, 1, vk.descriptorSets, 0, nullptr);
+        vkCmdBindDescriptorSets(vk.cmdBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipelineLayout, 0, 1, &vk.descriptorSets[0], 0, nullptr);
     }
     VkHelper::geometryDraw(vk.cmdBuffers[imageIndex], vk.graphicPipeline, vk.swapchainParam, geometryLeft);
+    updateDescriptorSets(vk.cmdBuffers[imageIndex], 1);
+    if(vk.descriptorSets != VK_NULL_HANDLE){
+        vkCmdBindDescriptorSets(vk.cmdBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipelineLayout, 0, 1, &vk.descriptorSets[1], 0, nullptr);
+    }
     VkHelper::geometryDraw(vk.cmdBuffers[imageIndex], vk.graphicPipeline, vk.swapchainParam, geometryRight);
 
     vkCmdEndRenderPass(vk.cmdBuffers[imageIndex]);

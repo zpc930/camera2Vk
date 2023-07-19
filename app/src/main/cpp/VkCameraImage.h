@@ -26,5 +26,4 @@ private:
     VkSamplerYcbcrConversion mConversion = VK_NULL_HANDLE;
 };
 
-
 #endif //CAMERA2VK_VKCAMERAIMAGE_H

@@ -39,7 +39,9 @@ add_library(camera2vk SHARED
         ${SRC_JNI_DIR}/VkCameraImage.h
         ${SRC_JNI_DIR}/Geometry.cpp
         ${SRC_JNI_DIR}/Geometry.h
+        ${SRC_JNI_DIR}/Texture.cpp
+        ${SRC_JNI_DIR}/Texture.h
         )
-include_directories(${WRAPPER_DIR})
+include_directories(${WRAPPER_DIR} external/stb_image)
 
 target_link_libraries(camera2vk app-glue log android dl mediandk camera2ndk glm)

@@ -49,6 +49,12 @@ public:
     static void createDescriptorPool(VkDevice device, VkDescriptorPool *out_descriptorPool);
     static void allocateDescriptorSets(VkDevice device, VkDescriptorPool pool,
                                           VkDescriptorSetLayout layout, VkDescriptorSet *out_descriptorSets);
+    static void createImage(VkPhysicalDeviceMemoryProperties physicalMemoType, VkDevice device, int width, int height,
+                               int depth, VkImageType imageType, VkFormat format, VkSampleCountFlagBits sampleCount,
+                               VkImageTiling tiling, VkImageUsageFlags usage,
+                               VkImage *out_image, VkDeviceMemory *out_imageMemory);
+    static void createImageView(VkDevice device, VkImage image, VkImageViewType viewType, VkFormat format, VkImageAspectFlags aspectMask, VkImageView *out_imageView);
+    static void createImageSampler(VkDevice device, VkSampler *out_sampler);
 };
 
 #endif //LEARN_VULKAN_VKHELPER_H

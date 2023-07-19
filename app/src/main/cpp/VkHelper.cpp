@@ -830,7 +830,7 @@ void VkHelper::geometryDraw(VkCommandBuffer cmdBuffer, VkPipeline graphicPipelin
     }
 }
 
-void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSamplerLeft, VkDescriptorSetLayout *out_descriptorSetLayout) {
+void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSampler, VkDescriptorSetLayout *out_descriptorSetLayout) {
     VkDescriptorSetLayoutBinding layoutBindings[] = {
             {
                     .binding = 0,
@@ -843,7 +843,7 @@ void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSam
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 1,
                     .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-                    .pImmutableSamplers = &immutableSamplerLeft
+                    .pImmutableSamplers = immutableSampler == VK_NULL_HANDLE ? nullptr : &immutableSampler
             }
     };
     VkDescriptorSetLayoutCreateInfo createInfo = {
@@ -860,18 +860,18 @@ void VkHelper::createDescriptorPool(VkDevice device, VkDescriptorPool *out_descr
     VkDescriptorPoolSize poolSizeInfo[] = {
             {
                     .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 1
+                    .descriptorCount = 2
             },
             {
                     .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .descriptorCount = 1
+                    .descriptorCount = 2
             }
     };
     VkDescriptorPoolCreateInfo createInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .pNext = nullptr,
             .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-            .maxSets = 1,
+            .maxSets = 2,
             .poolSizeCount = ARRAY_SIZE(poolSizeInfo),
             .pPoolSizes = poolSizeInfo,
     };
@@ -881,13 +881,97 @@ void VkHelper::createDescriptorPool(VkDevice device, VkDescriptorPool *out_descr
 void VkHelper::allocateDescriptorSets(VkDevice device, VkDescriptorPool pool,
                                       VkDescriptorSetLayout layout, VkDescriptorSet *out_descriptorSets) {
 
-    std::vector<VkDescriptorSetLayout> layouts(1, layout);
+    std::vector<VkDescriptorSetLayout> layouts(2, layout);
     VkDescriptorSetAllocateInfo allocateInfo = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .pNext = nullptr,
             .descriptorPool = pool,
-            .descriptorSetCount = 1,
+            .descriptorSetCount = 2,
             .pSetLayouts = layouts.data()
     };
     CALL_VK(vkAllocateDescriptorSets(device, &allocateInfo, out_descriptorSets));
+}
+
+void VkHelper::createImage(VkPhysicalDeviceMemoryProperties physicalMemoType, VkDevice device, int width, int height,
+                           int depth, VkImageType imageType, VkFormat format, VkSampleCountFlagBits sampleCount,
+                           VkImageTiling tiling, VkImageUsageFlags usage,
+                           VkImage *out_image, VkDeviceMemory *out_imageMemory) {
+    VkImageCreateInfo imageCreateInfo = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .imageType = imageType,
+            .format = format,
+            .extent = {
+                    .width = static_cast<uint32_t>(width),
+                    .height = static_cast<uint32_t>(height),
+                    .depth = static_cast<uint32_t>(depth)
+            },
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = sampleCount,
+            .tiling = tiling,
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+    CALL_VK(vkCreateImage(device, &imageCreateInfo, VK_ALLOC, out_image));
+
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(device, *out_image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = VkHelper::findMemoryType(physicalMemoType, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, out_imageMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate image memory!");
+    }
+
+    vkBindImageMemory(device, *out_image, *out_imageMemory, 0);
+}
+
+void VkHelper::createImageView(VkDevice device, VkImage image, VkImageViewType viewType, VkFormat format, VkImageAspectFlags aspectMask, VkImageView *out_imageView) {
+    VkImageViewCreateInfo createInfo = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = image,
+            .viewType = viewType,
+            .format = format,
+            .components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange = {
+                    .aspectMask = aspectMask,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+            }
+    };
+    CALL_VK(vkCreateImageView(device, &createInfo, VK_ALLOC, out_imageView));
+}
+
+void VkHelper::createImageSampler(VkDevice device, VkSampler *out_sampler) {
+    VkSamplerCreateInfo createInfo = {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .mipLodBias = 0.0f,
+            .anisotropyEnable = VK_FALSE,//各向异性过滤
+            .maxAnisotropy = 1.0f,
+            .compareEnable = VK_FALSE,
+            .compareOp = VK_COMPARE_OP_ALWAYS,
+            .minLod = 0.0f,
+            .maxLod = 0.0f,
+            .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+            .unnormalizedCoordinates = VK_FALSE
+    };
+    CALL_VK(vkCreateSampler(device, &createInfo, VK_ALLOC, out_sampler));
 }
