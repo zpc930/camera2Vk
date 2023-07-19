@@ -161,6 +161,7 @@ void VkCameraImage::update(VkBundle *vk, VkImageUsageFlags usage, VkSharingMode 
     imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     CALL_VK(vkCreateImage(vk->deviceInfo.device, &imageCreateInfo, VK_ALLOC, &mImage));
 
+#if 1
     // allocate and bind image memory
     VkImportAndroidHardwareBufferInfoANDROID importInfo = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID,
@@ -183,7 +184,53 @@ void VkCameraImage::update(VkBundle *vk, VkImageUsageFlags usage, VkSharingMode 
     };
     CALL_VK(vkAllocateMemory(vk->deviceInfo.device, &memoryAllocateInfo, VK_ALLOC, &mMemory));
     CALL_VK(vkBindImageMemory(vk->deviceInfo.device, mImage, mMemory, 0));
+#else
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(vk->deviceInfo.device, mImage, &memRequirements);
+    VkMemoryAllocateInfo memoryAllocateInfo = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .allocationSize = memRequirements.size,
+            .memoryTypeIndex = VkHelper::findMemoryType(vk->deviceInfo.physicalDevMemoProps, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+    };
+    CALL_VK(vkAllocateMemory(vk->deviceInfo.device, &memoryAllocateInfo, VK_ALLOC, &mMemory));
+    CALL_VK(vkBindImageMemory(vk->deviceInfo.device, mImage, mMemory, 0));
 
+    VkBuffer stageBuffer;
+    VkDeviceMemory stageMemory;
+    VkHelper::createBufferInternal(vk->deviceInfo.physicalDevMemoProps, vk->deviceInfo.device,
+                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  mDataSize, &stageBuffer, &stageMemory);
+
+    void* hbData;
+    void *data_ptr;
+    vkMapMemory(vk->deviceInfo.device, stageMemory, 0, mDataSize, 0, &data_ptr);
+    AHardwareBuffer_lock(hb, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, nullptr, &hbData);
+    memcpy(data_ptr, hbData, mDataSize);
+    AHardwareBuffer_unlock(hb, nullptr);
+    vkUnmapMemory(vk->deviceInfo.device, stageMemory);
+
+    VkCommandBuffer cmdBuffer;
+    VkHelper::allocateCommandBuffers(vk->deviceInfo.device, vk->cmdPool, 1, &cmdBuffer);
+    VkHelper::beginCommandBuffer(cmdBuffer, true);
+    VkBufferImageCopy region = {
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .mipLevel = 0,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+            },
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {static_cast<uint32_t>(bufferDesc.width), static_cast<uint32_t>(bufferDesc.height), 1 }
+    };
+    vkCmdCopyBufferToImage(cmdBuffer, stageBuffer, mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    VkHelper::endCommandBuffer(cmdBuffer, vk->deviceInfo.device, vk->cmdPool, vk->queueInfo.queue, true);
+    vkDestroyBuffer(vk->deviceInfo.device, stageBuffer, VK_ALLOC);
+    vkFreeMemory(vk->deviceInfo.device, stageMemory, VK_ALLOC);
+#endif
     //check memory requirements
     VkImageMemoryRequirementsInfo2 memReqsInfo = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
