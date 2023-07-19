@@ -12,6 +12,7 @@ class VkCameraImage {
 public:
     VkCameraImage(VkBundle *vk, AHardwareBuffer* hb);
     void update(VkBundle *vk, VkImageUsageFlags usage, VkSharingMode sharingMode, AHardwareBuffer* hb);
+    VkImage getImg() { return mImage; };
     VkImageView getImgView() { return mImgView; };
     VkSampler getSampler(){ return mSampler; };
     void destroyResources(VkBundle *vk, bool isDestroySampler) noexcept;

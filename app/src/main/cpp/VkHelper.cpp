@@ -227,7 +227,7 @@ void VkHelper::createCommandPool(VkDevice device, uint32_t workQueueIndex, VkCom
     VkCommandPoolCreateInfo createInfo = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .pNext = nullptr,
-            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
             .queueFamilyIndex = workQueueIndex
     };
     CALL_VK(vkCreateCommandPool(device, &createInfo, VK_ALLOC, out_cmdPool));
@@ -309,13 +309,12 @@ void VkHelper::createSwapchain(VkPhysicalDevice physicalDev, VkDevice device, Vk
             .imageColorSpace = out_swapchainParam->format.colorSpace,
             .imageExtent = out_swapchainParam->extent,
             .imageArrayLayers = 1,
-            //用为颜色附件
-            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             .imageSharingMode = workQueueIndex == presentQueueIndex ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT,
             .queueFamilyIndexCount = static_cast<uint32_t>(workQueueIndex == presentQueueIndex ? 1 : 2),
             .pQueueFamilyIndices = workQueueIndex == presentQueueIndex ? nullptr : queueFamilysArr,
             .preTransform = out_swapchainParam->capabilities.currentTransform,
-            .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, //忽略掉alpha通道
+            .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
             .presentMode = out_swapchainParam->presentMode,
             .clipped = VK_TRUE,
             .oldSwapchain = oldSwapchain
@@ -359,14 +358,25 @@ void VkHelper::createRenderPass(VkDevice device, SwapchainParam swapchainParam, 
             .pPreserveAttachments = nullptr,
     };
 
-    VkSubpassDependency dependency = {
-            .srcSubpass = VK_SUBPASS_EXTERNAL,								// 外部流程作为输入
-            .dstSubpass = 0,
-            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,// 颜色附件作为输出
-            .dependencyFlags = 0,
+    VkSubpassDependency dependencys[] = {
+            {
+                    .srcSubpass = VK_SUBPASS_EXTERNAL,
+                    .dstSubpass = 0,
+                    .srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                    .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+                    .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                    .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+            },
+            {
+                    .srcSubpass = 0,
+                    .dstSubpass = VK_SUBPASS_EXTERNAL,
+                    .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                    .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+                    .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+            }
     };
 
     VkRenderPassCreateInfo createInfo = {
@@ -377,8 +387,8 @@ void VkHelper::createRenderPass(VkDevice device, SwapchainParam swapchainParam, 
             .pAttachments = attachDesc,
             .subpassCount = 1,
             .pSubpasses = &subpass,
-            .dependencyCount = 1,
-            .pDependencies = &dependency
+            .dependencyCount = ARRAY_SIZE(dependencys),
+            .pDependencies = dependencys
     };
 
     CALL_VK(vkCreateRenderPass(device, &createInfo, VK_ALLOC, out_renderPass));
@@ -534,7 +544,6 @@ void VkHelper::createPipeline(VkDevice device, VkPipelineLayout pipelineLayout, 
     };
 
     VkPipelineColorBlendAttachmentState attachmentState = {
-            //    VkColorComponentFlags    colorWriteMask;
             .blendEnable = VK_FALSE,
             .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
             .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
@@ -553,7 +562,7 @@ void VkHelper::createPipeline(VkDevice device, VkPipelineLayout pipelineLayout, 
             .pNext = nullptr,
             .flags = 0,
             .logicOpEnable = VK_FALSE,
-            .logicOp = VK_LOGIC_OP_CLEAR,
+            .logicOp = VK_LOGIC_OP_COPY,
             .attachmentCount = 1,
             .pAttachments = &attachmentState,
             .blendConstants = {0, 0, 0, 0},
@@ -821,7 +830,7 @@ void VkHelper::geometryDraw(VkCommandBuffer cmdBuffer, VkPipeline graphicPipelin
     }
 }
 
-void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSampler, VkDescriptorSetLayout *out_descriptorSetLayout) {
+void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSamplerLeft, VkDescriptorSetLayout *out_descriptorSetLayout) {
     VkDescriptorSetLayoutBinding layoutBindings[] = {
             {
                     .binding = 0,
@@ -834,13 +843,7 @@ void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSam
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 1,
                     .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-                    .pImmutableSamplers = &immutableSampler
-            },
-            {
-                    .binding = 2,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+                    .pImmutableSamplers = &immutableSamplerLeft
             }
     };
     VkDescriptorSetLayoutCreateInfo createInfo = {
@@ -854,14 +857,9 @@ void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSam
 }
 
 void VkHelper::createDescriptorPool(VkDevice device, VkDescriptorPool *out_descriptorPool) {
-    //auto poolSizeInfo = Vertex::getDescPoolSizes(maxFrameCount);
     VkDescriptorPoolSize poolSizeInfo[] = {
             {
                     .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                    .descriptorCount = 1
-            },
-            {
-                    .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 1
             },
             {

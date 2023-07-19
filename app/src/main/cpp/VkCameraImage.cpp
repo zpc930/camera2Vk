@@ -217,7 +217,7 @@ void VkCameraImage::update(VkBundle *vk, VkImageUsageFlags usage, VkSharingMode 
             .flags = 0,
             .image = mImage,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM_KHR,
+            .format = formatInfo.format,
             .components = {
                     .r = VK_COMPONENT_SWIZZLE_IDENTITY,
                     .g = VK_COMPONENT_SWIZZLE_IDENTITY,

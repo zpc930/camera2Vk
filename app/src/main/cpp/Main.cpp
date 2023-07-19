@@ -92,7 +92,7 @@ void initGeometry(){
     VkHelper::initGeometryBuffers(vk.deviceInfo.physicalDevMemoProps, vk.deviceInfo.device, vk.cmdPool, vk.queueInfo.queue, geometryRight);
 }
 
-void updateDescriptorSets(){
+void updateDescriptorSets(VkCommandBuffer cmdBuffer){
 
     AHardwareBuffer *hb = imageReader->getLatestBuffer();
     if(nullptr == hb){
@@ -156,6 +156,25 @@ void updateDescriptorSets(){
 //            }
     };
     vkUpdateDescriptorSets(vk.deviceInfo.device, ARRAY_SIZE(writeDescSets), writeDescSets, 0, nullptr);
+
+    VkImageMemoryBarrier camFragBarrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+    };
+    camFragBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    camFragBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    camFragBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL_KHR;
+    camFragBarrier.dstQueueFamilyIndex = vk.queueInfo.presentQueueIndex;
+    camFragBarrier.image = cameraImageLeft != nullptr ? cameraImageLeft->getImg() : nullptr;
+    camFragBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    camFragBarrier.subresourceRange.baseMipLevel = 0;
+    camFragBarrier.subresourceRange.levelCount = 1;
+    camFragBarrier.subresourceRange.baseArrayLayer = 0;
+    camFragBarrier.subresourceRange.layerCount = 1;
+    camFragBarrier.srcAccessMask = 0;
+    camFragBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         static_cast<VkDependencyFlags>(0), 0, nullptr, 0, nullptr, 1, &camFragBarrier);
 }
 
 void initGraphics(){
@@ -180,7 +199,7 @@ void initGraphics(){
                 .image = vk.swapchainImage.images[i],
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
                 .format = vk.swapchainParam.format.format,
-                .components = {VK_COMPONENT_SWIZZLE_IDENTITY},
+                .components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
                 .subresourceRange = {
                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                         .baseMipLevel = 0,
@@ -293,7 +312,7 @@ void processRenderFrame(){
     };
     CALL_VK(vkBeginCommandBuffer(vk.cmdBuffers[imageIndex], &cmdBufferBeginInfo));
 
-    updateDescriptorSets();
+    updateDescriptorSets(vk.cmdBuffers[imageIndex]);
 
     VkClearValue defaultClearValues = { 0.1f,  0.1f,  0.2f,  1.0f};
     VkRenderPassBeginInfo renderPassBeginInfo = {
