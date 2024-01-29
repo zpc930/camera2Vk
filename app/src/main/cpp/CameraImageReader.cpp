@@ -36,8 +36,8 @@ AHardwareBuffer *CameraImageReader::getLatestBuffer() {
     auto result = AImageReader_acquireLatestImage(mReader.get(), &image);
     if(result != AMEDIA_OK || !image){
         Error("Failed to acquire image from camera.");
-    }
-    else {
+        return nullptr;
+    } else {
         AHardwareBuffer* buffer = nullptr;
         auto result = AImage_getHardwareBuffer(image, &buffer);
         if(result != AMEDIA_OK || !buffer){

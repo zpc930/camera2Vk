@@ -56,7 +56,7 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
 
             // Select which camera to use (front or back)
             if(facing == ACAMERA_LENS_FACING_BACK)
-                selected_camera = std::string(cam_id);
+                selectedCamera = std::string(cam_id);
         }
         ACameraMetadata_free(metadata);
     }

@@ -5,7 +5,7 @@ plugins {
 android {
     namespace 'com.example.camera2vk'
     compileSdk 33
-    ndkVersion "22.0.7026061"
+    ndkVersion "23.1.7779620"
 
     defaultConfig {
         applicationId "com.example.camera2vk"
@@ -47,6 +47,21 @@ android {
     }
     buildFeatures {
         viewBinding true
+    }
+    signingConfigs {
+        release {
+            storeFile file("/home/cxh/Android/android.jks")
+            storePassword 'android'
+            keyAlias 'android'
+            keyPassword 'android'
+        }
+
+        debug {
+            storeFile file("/home/cxh/Android/android.jks")
+            storePassword 'android'
+            keyAlias 'android'
+            keyPassword 'android'
+        }
     }
 }
 

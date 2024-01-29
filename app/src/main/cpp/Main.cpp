@@ -19,7 +19,8 @@ bool isCamPermission;                   // camera permission?
 bool isRunning;                         // app is running?
 struct android_app *gApp;               // global app
 VkBundle vk;                            // vulkan bundle
-CameraImageReader *imageReader;         // camera image reader
+CameraImageReader *imageReaderLeft;     // camera image reader
+CameraImageReader *imageReaderRight;    // camera image reader
 CameraManager *camLeft;                 // camera 1
 CameraManager *camRight;                // camera 2
 Geometry geometryLeft;                  // geometry 1
@@ -44,20 +45,34 @@ std::vector<char> readFileFromAndroidRes(const std::string& filePath){
 
 void initCamera(){
     if(!isCamPermission){
-        AndroidCameraPermission::requestCameraPermission(gApp);
+        //AndroidCameraPermission::requestCameraPermission(gApp);
+        isCamPermission = true;
     }
 
-    imageReader = new CameraImageReader(1600, 1600, AIMAGE_FORMAT_PRIVATE, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4);
-    camLeft = new CameraManager(imageReader->getWindow(), 2);
+    imageReaderLeft = new CameraImageReader(1600, 1600, AIMAGE_FORMAT_PRIVATE, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4);
+    camLeft = new CameraManager(imageReaderLeft->getWindow(), 0);
     camLeft->startCapturing();
+
+    imageReaderRight= new CameraImageReader(1600, 1600, AIMAGE_FORMAT_PRIVATE, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4);
+    camRight = new CameraManager(imageReaderRight->getWindow(), 3);
+    camRight->startCapturing();
 }
 
 void initCameraImage(){
     AHardwareBuffer *hbLeft;
-    while (!(hbLeft = imageReader->getLatestBuffer())){
+    while (!(hbLeft = imageReaderLeft->getLatestBuffer())){
         usleep(10000u);
     }
+    AHardwareBuffer_Desc desc;
+    AHardwareBuffer_describe(hbLeft, &desc);
+    Print("cxh---> buffer:[%d x %d, format:%d, usage: %lu, stride:%d]", desc.width, desc.height, desc.format, desc.usage, desc.stride);
     cameraImageLeft = new VkCameraImage(&vk, hbLeft);
+
+    AHardwareBuffer *hbRight;
+    while (!(hbRight = imageReaderRight->getLatestBuffer())){
+        usleep(10000u);
+    }
+    cameraImageRight = new VkCameraImage(&vk, hbRight);
 }
 
 void createWindow(){
@@ -108,17 +123,35 @@ void initGeometry(){
 void updateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t side){
 
 #ifdef RENDER_CAMERA_IMAGE
-    AHardwareBuffer *hb = imageReader->getLatestBuffer();
-    if(nullptr == hb){
-        Error("Can not read camera latest buffer!");
-        return;
+    VkImage image;
+    VkImageView view;
+    VkSampler sampler;
+    if(side == 0){
+        AHardwareBuffer *hb = imageReaderLeft->getLatestBuffer();
+        if(nullptr == hb){
+            Error("Can not read camera latest buffer!");
+            return;
+        }
+        cameraImageLeft->update(&vk, VK_IMAGE_USAGE_SAMPLED_BIT, VK_SHARING_MODE_EXCLUSIVE, hb);
+        image = cameraImageLeft->getImg();
+        view = cameraImageLeft->getImgView();
+        sampler = cameraImageLeft->getSampler();
+    } else {
+        AHardwareBuffer *hb = imageReaderRight->getLatestBuffer();
+        if(nullptr == hb){
+            Error("Can not read camera latest buffer!");
+            return;
+        }
+        cameraImageRight->update(&vk, VK_IMAGE_USAGE_SAMPLED_BIT, VK_SHARING_MODE_EXCLUSIVE, hb);
+        image = cameraImageRight->getImg();
+        view = cameraImageRight->getImgView();
+        sampler = cameraImageRight->getSampler();
     }
-    cameraImageLeft->update(&vk, VK_IMAGE_USAGE_SAMPLED_BIT, VK_SHARING_MODE_EXCLUSIVE, hb);
 
     VkDescriptorImageInfo imageInfo[] = {
             {
-                    .sampler = cameraImageLeft->getSampler(),
-                    .imageView = cameraImageLeft->getImgView(),
+                    .sampler = sampler,
+                    .imageView = view,
                     .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
             }
     };
@@ -162,12 +195,6 @@ void updateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t side){
     };
     vkUpdateDescriptorSets(vk.deviceInfo.device, ARRAY_SIZE(writeDescSets), writeDescSets, 0, nullptr);
 
-
-#ifdef RENDER_CAMERA_IMAGE
-    VkImage image = cameraImageLeft->getImg();
-#else
-    VkImage image = side == 0 ? textureLeft.getImg() : textureRight.getImg();
-#endif
     VkImageMemoryBarrier camFragBarrier = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
@@ -304,11 +331,14 @@ void stopRender(){
     vkDestroyInstance(vk.instance, VK_ALLOC);
     cameraImageRight->destroyResources(&vk, true);
     cameraImageLeft->destroyResources(&vk, true);
+    camLeft->stopCapturing();
+    camRight->stopCapturing();
     SAFE_DELETE(cameraImageRight);
     SAFE_DELETE(cameraImageLeft);
     SAFE_DELETE(camRight);
     SAFE_DELETE(camLeft);
-    SAFE_DELETE(imageReader);
+    SAFE_DELETE(imageReaderLeft);
+    SAFE_DELETE(imageReaderRight);
 }
 
 void processRenderFrame(){
@@ -432,6 +462,7 @@ void cmd_handler(struct android_app *app, int32_t cmd) {
         case APP_CMD_TERM_WINDOW: {
             Print("surfaceDestroyed()");
             Print("    APP_CMD_TERM_WINDOW");
+            stopRender();
             break;
         }
     }
@@ -450,7 +481,7 @@ void android_main( struct android_app *app)
     app->onAppCmd = cmd_handler;
 
     //request camera permission
-    AndroidCameraPermission::requestCameraPermission(app);
+    //AndroidCameraPermission::requestCameraPermission(app);
 
     int32_t result;
     android_poll_source* source;
@@ -463,8 +494,6 @@ void android_main( struct android_app *app)
 
             if(app->destroyRequested)
             {
-                Print("Terminating event loop...");
-                stopRender();
                 return;
             }
         }
