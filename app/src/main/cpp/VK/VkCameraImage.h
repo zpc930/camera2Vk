@@ -5,7 +5,7 @@
 #define CAMERA2VK_VKCAMERAIMAGE_H
 
 #include "VkBundle.h"
-#include "CameraImageReader.h"
+#include "../Camera/CameraImageReader.h"
 #include "vulkan_wrapper.h"
 
 class VkCameraImage {

@@ -10,6 +10,9 @@ const DriverFeature validationInstanceLayers[] = {
 const DriverFeature validationInstanceExtensions[] = {
         {VK_KHR_SURFACE_EXTENSION_NAME,          false,     true},
         {VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,    false,     true},
+#ifdef RENDER_USE_SINGLE_BUFFER
+        {VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, false, true},
+#endif
         {VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME, false,     true},
         {VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME, false,  true},
         {VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, false, true}
@@ -17,6 +20,9 @@ const DriverFeature validationInstanceExtensions[] = {
 
 const DriverFeature validationDeviceExtensions[] = {
         {VK_KHR_SWAPCHAIN_EXTENSION_NAME, false, true},
+#ifdef RENDER_USE_SINGLE_BUFFER
+        {VK_KHR_SHARED_PRESENTABLE_IMAGE_EXTENSION_NAME, false, true},
+#endif
         {VK_KHR_MAINTENANCE1_EXTENSION_NAME, false, true},
         {VK_KHR_BIND_MEMORY_2_EXTENSION_NAME, false, true},
         {VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, false, true},
@@ -32,11 +38,11 @@ const DriverFeature validationDeviceExtensions[] = {
 VkBool32 debugReportCallback(VkDebugReportFlagsEXT msgFlags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject,
                              size_t location, int32_t msgCode, const char *pLayerPrefix, const char *pMsg, void *pUserData){
     if(msgFlags |= VK_DEBUG_REPORT_ERROR_BIT_EXT){
-        Error("%s: [%s] Code %d : %s", "Error", pLayerPrefix, msgCode, pMsg);
+        LOG_E("%s: [%s] Code %d : %s", "Error", pLayerPrefix, msgCode, pMsg);
     } else if(msgFlags |= VK_DEBUG_REPORT_WARNING_BIT_EXT) {
-        Warn("%s: [%s] Code %d : %s", "Warning", pLayerPrefix, msgCode, pMsg);
+        LOG_W("%s: [%s] Code %d : %s", "Warning", pLayerPrefix, msgCode, pMsg);
     } else {
-        Print("%s: [%s] Code %d : %s", "Info", pLayerPrefix, msgCode, pMsg);
+        LOG_D("%s: [%s] Code %d : %s", "Info", pLayerPrefix, msgCode, pMsg);
     }
     return VK_FALSE;
 }
@@ -47,7 +53,7 @@ void VkHelper::createInstance(bool bValidate, VkInstance *out_instance, VkDebugR
     CALL_VK(vkEnumerateInstanceLayerProperties(&availableLayerCount, nullptr));
     VkLayerProperties availableLayerProps[availableLayerCount];
     CALL_VK(vkEnumerateInstanceLayerProperties(&availableLayerCount, availableLayerProps));
-    Print("---------------------------------");
+    LOG_D("---------------------------------");
     const char *enabledLayerNames[32] = {};
     uint32_t enabledLayerCount = 0;
     checkFeatures("Instance Layers", bValidate, false, validationInstanceLayers, ARRAY_SIZE(validationInstanceLayers),
@@ -58,7 +64,7 @@ void VkHelper::createInstance(bool bValidate, VkInstance *out_instance, VkDebugR
     CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, nullptr));
     VkExtensionProperties availableExtensionProps[availableExtensionCount];
     CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, availableExtensionProps));
-    Print("---------------------------------");
+    LOG_D("---------------------------------");
     const char *enableExtensionNames[32] = {};
     uint32_t enableExtensionCount = 0;
     checkFeatures("Instance Extensions", bValidate, true, validationInstanceExtensions, ARRAY_SIZE(validationInstanceExtensions),
@@ -100,6 +106,10 @@ void VkHelper::createInstance(bool bValidate, VkInstance *out_instance, VkDebugR
     }
 
     CALL_VK(vkCreateInstance(&createInfo, VK_ALLOC, out_instance));
+
+    vkGetPhysicalDeviceSurfaceCapabilities2KHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(
+            vkGetInstanceProcAddr(*out_instance, "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
+    LOG_D("vkGetPhysicalDeviceSurfaceCapabilities2KHR==%p", vkGetPhysicalDeviceSurfaceCapabilities2KHR);
 }
 
 void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface, DeviceInfo *out_deviceInfo, QueueInfo *out_queueInfo) {
@@ -108,8 +118,8 @@ void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface,
     VkPhysicalDevice physicalDevs[physicalDevCount];
     CALL_VK(vkEnumeratePhysicalDevices(instance, &physicalDevCount, physicalDevs));
 
-    Print("---------------------------------");
-    Print("Physical Devices:");
+    LOG_D("---------------------------------");
+    LOG_D("Physical Devices:");
     //选取的物理设备和队列索引
     VkPhysicalDevice selectedPhysicalDev = nullptr;
     uint16_t workQueueIndex;
@@ -130,7 +140,7 @@ void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface,
         for(int j = 0; j < queueFamilyPropCount; j++){
             VkBool32 surfaceSupport;
             vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevs[i], i, surface, &surfaceSupport);
-            Print("Surface Support: %d", surfaceSupport);
+            LOG_D("Surface Support: %d", surfaceSupport);
 
             if(surfaceSupport && queueFamilyProps[j].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 selectedPhysicalDev = physicalDevs[i];
@@ -197,6 +207,10 @@ void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface,
     CALL_VK(vkCreateDevice(out_deviceInfo->physicalDev, &deviceCreateInfo, VK_ALLOC, &out_deviceInfo->device));
 
     vkGetDeviceQueue(out_deviceInfo->device, out_queueInfo->workQueueIndex, 0, &out_queueInfo->queue);
+
+    vkGetSwapchainStatusKHR = reinterpret_cast<PFN_vkGetSwapchainStatusKHR>(
+            vkGetDeviceProcAddr(out_deviceInfo->device, "vkGetSwapchainStatusKHR"));
+    LOG_D("vkGetSwapchainStatusKHR==%p", vkGetSwapchainStatusKHR);
 }
 
 void VkHelper::printPhysicalDevLog(const VkPhysicalDeviceProperties &devProps) {
@@ -209,17 +223,17 @@ void VkHelper::printPhysicalDevLog(const VkPhysicalDeviceProperties &devProps) {
     const uint32_t apiMinor = VK_VERSION_MINOR(devProps.apiVersion);
     const uint32_t apiPatch = VK_VERSION_PATCH(devProps.apiVersion);
 
-    Print("---------------------------------");
-    Print("Device Name          : %s", devProps.deviceName);
-    Print("Device Type          : %s",
+    LOG_D("---------------------------------");
+    LOG_D("Device Name          : %s", devProps.deviceName);
+    LOG_D("Device Type          : %s",
           ((devProps.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) ? "integrated GPU" :
            ((devProps.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) ? "discrete GPU" :
             ((devProps.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU) ? "virtual GPU" :
              ((devProps.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) ? "CPU" : "unknown")))));
-    Print("Vendor ID            : 0x%04X", devProps.vendorID);
-    Print("Device ID            : 0x%04X", devProps.deviceID);
-    Print("Driver Version       : %d.%d.%d", driverMajor, driverMinor, driverPatch);
-    Print("API Version          : %d.%d.%d", apiMajor, apiMinor, apiPatch);
+    LOG_D("Vendor ID            : 0x%04X", devProps.vendorID);
+    LOG_D("Device ID            : 0x%04X", devProps.deviceID);
+    LOG_D("Driver Version       : %d.%d.%d", driverMajor, driverMinor, driverPatch);
+    LOG_D("API Version          : %d.%d.%d", apiMajor, apiMinor, apiPatch);
     /****************** For log *********************/
 }
 
@@ -237,7 +251,16 @@ void querySwapchainParam(VkPhysicalDevice physicalDev, VkSurfaceKHR surface, Swa
     //capabilities
     CALL_VK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDev, surface, &out_swapchainParam->capabilities));
     out_swapchainParam->extent = out_swapchainParam->capabilities.currentExtent;
-    Print("Extent: %d, %d", out_swapchainParam->extent.width, out_swapchainParam->extent.height);
+    LOG_D("Extent: %d, %d", out_swapchainParam->extent.width, out_swapchainParam->extent.height);
+
+    VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
+            .pNext = nullptr,
+            .surface = surface
+    };
+    out_swapchainParam->capabilities2.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+    out_swapchainParam->capabilities2.pNext = nullptr;
+    CALL_VK(vkGetPhysicalDeviceSurfaceCapabilities2KHR(physicalDev, &surfaceInfo, &out_swapchainParam->capabilities2));
 
     //format
     uint32_t formatCount;
@@ -298,24 +321,32 @@ void VkHelper::createSwapchain(VkPhysicalDevice physicalDev, VkDevice device, Vk
         oldSwapchain = *out_swapchain;
     }
 
+#ifdef RENDER_USE_SINGLE_BUFFER
+    uint32_t minImageCount = 1;
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR;// or VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR
+#else
+    uint32_t minImageCount = out_swapchainParam->capabilities.minImageCount;
+    VkPresentModeKHR presentMode = out_swapchainParam->presentMode;
+#endif
+
     VkSwapchainCreateInfoKHR swapchainCreateInfo = {
             .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
             .pNext = nullptr,
             .flags = 0,
             //上文创建的窗口表面
             .surface = surface,
-            .minImageCount = out_swapchainParam->capabilities.minImageCount,
+            .minImageCount = minImageCount,
             .imageFormat = out_swapchainParam->format.format,
             .imageColorSpace = out_swapchainParam->format.colorSpace,
             .imageExtent = out_swapchainParam->extent,
             .imageArrayLayers = 1,
-            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             .imageSharingMode = workQueueIndex == presentQueueIndex ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT,
             .queueFamilyIndexCount = static_cast<uint32_t>(workQueueIndex == presentQueueIndex ? 1 : 2),
             .pQueueFamilyIndices = workQueueIndex == presentQueueIndex ? nullptr : queueFamilysArr,
             .preTransform = out_swapchainParam->capabilities.currentTransform,
             .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
-            .presentMode = out_swapchainParam->presentMode,
+            .presentMode = presentMode,
             .clipped = VK_TRUE,
             .oldSwapchain = oldSwapchain
     };
@@ -663,7 +694,7 @@ uint32_t VkHelper::findMemoryType(VkPhysicalDeviceMemoryProperties physicalMemoT
             return i;
         }
     }
-    Error("failed to find suitable memory type.");
+    LOG_E("failed to find suitable memory type.");
     return -1;
 }
 
@@ -761,7 +792,7 @@ void VkHelper::createBuffer(VkPhysicalDeviceMemoryProperties physicalMemoType, V
 void VkHelper::initGeometryBuffers(VkPhysicalDeviceMemoryProperties physicalMemoType, VkDevice device,
                                    VkCommandPool cmdPool, VkQueue queue, Geometry &geometry){
     if(geometry.vertices.empty()){
-        Error("The geometry's vertices is empty.");
+        LOG_E("The geometry's vertices is empty.");
         return;
     }
     createBuffer(physicalMemoType, device, cmdPool, queue,VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,

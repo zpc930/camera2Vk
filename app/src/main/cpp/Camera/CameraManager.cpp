@@ -1,7 +1,7 @@
 #include "CameraManager.h"
 #include <stdexcept>
 #include <sstream>
-#include "Common.h"
+#include "../Common.h"
 
 CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex)
     : mNativeWindow(nativeWindow),
@@ -41,10 +41,12 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
 
     std::string selectedCamera;
 // if you want query camera's metadata
-#if 0
+#if 1
     for(uint32_t i = 0; i < mIds->numCameras; ++i)
     {
         auto cam_id = mIds->cameraIds[i];
+        LOG_D("camera %s", cam_id);
+
         ACameraMetadata* metadata = nullptr;
         result = ACameraManager_getCameraCharacteristics(mManager.get(), cam_id, &metadata);
         if(result != ACAMERA_OK || !metadata)
@@ -60,6 +62,7 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
         }
         ACameraMetadata_free(metadata);
     }
+    selectedCamera = std::to_string(selectCamIndex);
 #else
     selectedCamera = std::to_string(selectCamIndex);
 #endif
@@ -137,7 +140,7 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
         throw std::runtime_error("Couldn't add capture request to camera output target.");
 
     //end
-    Print("Camera %d logical device created.", selectCamIndex);
+    LOG_D("Camera %d logical device created.", selectCamIndex);
 }
 
 void CameraManager::startCapturing(){

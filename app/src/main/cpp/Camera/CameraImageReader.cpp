@@ -2,7 +2,7 @@
 // Created by ts on 2023/7/18.
 //
 #include "CameraImageReader.h"
-#include "Common.h"
+#include "../Common.h"
 
 CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t format,
                                      uint64_t usage, uint32_t maxImages)
@@ -28,20 +28,20 @@ CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t f
     if (result != AMEDIA_OK || mNativeWindow == nullptr)
         throw std::runtime_error("Failed to obtain window handle.");
 
-    Print("Image reader created.");
+    LOG_D("Image reader created.");
 }
 
 AHardwareBuffer *CameraImageReader::getLatestBuffer() {
     AImage *image = nullptr;
     auto result = AImageReader_acquireLatestImage(mReader.get(), &image);
     if(result != AMEDIA_OK || !image){
-        Error("Failed to acquire image from camera.");
-        return nullptr;
+        //Error("Failed to acquire image from camera.");
+        //return nullptr;
     } else {
         AHardwareBuffer* buffer = nullptr;
         auto result = AImage_getHardwareBuffer(image, &buffer);
         if(result != AMEDIA_OK || !buffer){
-            Error("Failed to acquire hardware buffer.");
+            LOG_E("Failed to acquire hardware buffer.");
         } else {
             mCurIndex++;
             if(mCurIndex == mImages.size())

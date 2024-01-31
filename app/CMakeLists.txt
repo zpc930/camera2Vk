@@ -22,26 +22,33 @@ add_subdirectory(external/glm)
 add_library(camera2vk SHARED
         ${WRAPPER_DIR}/vulkan_wrapper.h
         ${WRAPPER_DIR}/vulkan_wrapper.c
-        ${SRC_JNI_DIR}/Main.cpp
+        ${SRC_JNI_DIR}/Camera/AndroidCameraPermission.cpp
+        ${SRC_JNI_DIR}/Camera/AndroidCameraPermission.h
+        ${SRC_JNI_DIR}/Camera/CameraManager.cpp
+        ${SRC_JNI_DIR}/Camera/CameraManager.h
+        ${SRC_JNI_DIR}/Camera/CameraImageReader.cpp
+        ${SRC_JNI_DIR}/Camera/CameraImageReader.h
+
+        ${SRC_JNI_DIR}/VK/VulkanCommon.h
+        ${SRC_JNI_DIR}/VK/VkBundle.h
+        ${SRC_JNI_DIR}/VK/VkHelper.cpp
+        ${SRC_JNI_DIR}/VK/VkHelper.h
+        ${SRC_JNI_DIR}/VK/VkShaderParam.h
+        ${SRC_JNI_DIR}/VK/VkCameraImage.cpp
+        ${SRC_JNI_DIR}/VK/VkCameraImage.h
+        ${SRC_JNI_DIR}/VK/Geometry.cpp
+        ${SRC_JNI_DIR}/VK/Geometry.h
+        ${SRC_JNI_DIR}/VK/Texture.cpp
+        ${SRC_JNI_DIR}/VK/Texture.h
+
+        ${SRC_JNI_DIR}/GL/GLRenderer.cpp
+        ${SRC_JNI_DIR}/GL/GLRenderer.h
+
         ${SRC_JNI_DIR}/Common.h
-        ${SRC_JNI_DIR}/AndroidCameraPermission.cpp
-        ${SRC_JNI_DIR}/AndroidCameraPermission.h
-        ${SRC_JNI_DIR}/VulkanCommon.h
-        ${SRC_JNI_DIR}/VkBundle.h
-        ${SRC_JNI_DIR}/VkHelper.cpp
-        ${SRC_JNI_DIR}/VkHelper.h
-        ${SRC_JNI_DIR}/CameraManager.cpp
-        ${SRC_JNI_DIR}/CameraManager.h
-        ${SRC_JNI_DIR}/CameraImageReader.cpp
-        ${SRC_JNI_DIR}/CameraImageReader.h
-        ${SRC_JNI_DIR}/VkShaderParam.h
-        ${SRC_JNI_DIR}/VkCameraImage.cpp
-        ${SRC_JNI_DIR}/VkCameraImage.h
-        ${SRC_JNI_DIR}/Geometry.cpp
-        ${SRC_JNI_DIR}/Geometry.h
-        ${SRC_JNI_DIR}/Texture.cpp
-        ${SRC_JNI_DIR}/Texture.h
+        ${SRC_JNI_DIR}/FpsCollector.cpp
+        ${SRC_JNI_DIR}/FpsCollector.h
+        ${SRC_JNI_DIR}/Main.cpp
         )
 include_directories(${WRAPPER_DIR} external/stb_image)
 
-target_link_libraries(camera2vk app-glue log android dl mediandk camera2ndk glm)
+target_link_libraries(camera2vk app-glue log android dl mediandk camera2ndk glm EGL GLESv3)

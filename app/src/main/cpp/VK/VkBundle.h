@@ -23,6 +23,7 @@ struct SwapchainImage{
 
 struct SwapchainParam{
     VkSurfaceCapabilitiesKHR capabilities;	//功能
+    VkSurfaceCapabilities2KHR capabilities2;//功能
     VkSurfaceFormatKHR format;				//格式
     VkPresentModeKHR presentMode;			//呈现模式
     VkExtent2D extent;						//范围

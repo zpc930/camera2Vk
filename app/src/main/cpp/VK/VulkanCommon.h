@@ -7,10 +7,12 @@
 #include <fstream>
 #include <sstream>
 #include "vulkan_wrapper.h"
-#include "Common.h"
+#include "../Common.h"
 
 #define VK_ALLOC nullptr
 #define APP_NAME "Camera2Vk"
+
+#define RENDER_USE_SINGLE_BUFFER
 
 typedef struct
 {
@@ -136,7 +138,7 @@ checkFeatures(const char *label, const bool validationEnabled, const bool extens
             }
         }
         foundAllRequired &= ( found || !requested[i].required );
-        Print( "%-21s%c %s %s", ( i == 0 ? label : "" ), ( i == 0 ? ':' : ' ' ), requested[i].name, result );
+        LOG_D( "%-21s%c %s %s", ( i == 0 ? label : "" ), ( i == 0 ? ':' : ' ' ), requested[i].name, result );
     }
     return foundAllRequired;
 }
