@@ -36,15 +36,21 @@ add_library(camera2vk SHARED
         ${SRC_JNI_DIR}/VK/VkShaderParam.h
         ${SRC_JNI_DIR}/VK/VkCameraImage.cpp
         ${SRC_JNI_DIR}/VK/VkCameraImage.h
+        ${SRC_JNI_DIR}/VK/VkCameraImageV2.cpp
+        ${SRC_JNI_DIR}/VK/VkCameraImageV2.h
         ${SRC_JNI_DIR}/VK/Geometry.cpp
         ${SRC_JNI_DIR}/VK/Geometry.h
         ${SRC_JNI_DIR}/VK/Texture.cpp
         ${SRC_JNI_DIR}/VK/Texture.h
+        ${SRC_JNI_DIR}/VK/VKRenderer.cpp
+        ${SRC_JNI_DIR}/VK/VKRenderer.h
 
         ${SRC_JNI_DIR}/GL/GLRenderer.cpp
         ${SRC_JNI_DIR}/GL/GLRenderer.h
 
         ${SRC_JNI_DIR}/Common.h
+        ${SRC_JNI_DIR}/ProfileTrace.cpp
+        ${SRC_JNI_DIR}/ProfileTrace.h
         ${SRC_JNI_DIR}/FpsCollector.cpp
         ${SRC_JNI_DIR}/FpsCollector.h
         ${SRC_JNI_DIR}/Main.cpp

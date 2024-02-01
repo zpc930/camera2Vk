@@ -4,9 +4,8 @@
 #include "CameraImageReader.h"
 #include "../Common.h"
 
-CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t format,
-                                     uint64_t usage, uint32_t maxImages)
-    : mCurIndex{maxImages - 1}, mReader{nullptr, AImageReader_delete}{
+CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t format, uint32_t maxImages)
+                            : mCurIndex{maxImages - 1}, mReader{nullptr, AImageReader_delete}{
 
     if(maxImages < 2)
         throw std::runtime_error("Max images must be at least 2.");
@@ -14,10 +13,16 @@ CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t f
     for(uint32_t i = 0; i < maxImages; ++i)
         mImages.push_back({nullptr, AImage_delete});
 
-    mBuffers = std::vector<AHardwareBuffer*>(maxImages, nullptr);
-
     auto pt = mReader.release();
-    AImageReader_newWithUsage(width, height, format, usage, mImages.size() + 2, &pt);
+    //AImageReader_newWithUsage(width, height, format, usage, mImages.size() + 2, &pt);
+    auto rt = AImageReader_new(width, height, format, mImages.size() + 2, &pt);
+    if(rt != AMEDIA_OK){
+        LOG_E("Failed to create image reader.");
+    }
+//    AImageReader_ImageListener listener;
+//    listener.context = nullptr;
+//    listener.onImageAvailable = leftImageCallback;
+//    AImageReader_setImageListener(pt, &listener);
     mReader.reset(pt);
 
     if(!mReader)
@@ -31,26 +36,16 @@ CameraImageReader::CameraImageReader(uint32_t width, uint32_t height, uint32_t f
     LOG_D("Image reader created.");
 }
 
-AHardwareBuffer *CameraImageReader::getLatestBuffer() {
+AImage *CameraImageReader::getLatestImage() {
     AImage *image = nullptr;
     auto result = AImageReader_acquireLatestImage(mReader.get(), &image);
-    if(result != AMEDIA_OK || !image){
-        //Error("Failed to acquire image from camera.");
-        //return nullptr;
-    } else {
-        AHardwareBuffer* buffer = nullptr;
-        auto result = AImage_getHardwareBuffer(image, &buffer);
-        if(result != AMEDIA_OK || !buffer){
-            LOG_E("Failed to acquire hardware buffer.");
-        } else {
-            mCurIndex++;
-            if(mCurIndex == mImages.size())
-                mCurIndex = 0;
-            mImages[mCurIndex].reset(image);
-            mBuffers[mCurIndex] = buffer;
-        }
+    if(result == AMEDIA_OK && image) {
+        mCurIndex++;
+        if(mCurIndex == mImages.size())
+            mCurIndex = 0;
+        mImages[mCurIndex].reset(image);
     }
-    return mBuffers[mCurIndex];
+    return mImages[mCurIndex].get();
 }
 
 ANativeWindow *CameraImageReader::getWindow() {

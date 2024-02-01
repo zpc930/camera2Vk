@@ -107,9 +107,11 @@ void VkHelper::createInstance(bool bValidate, VkInstance *out_instance, VkDebugR
 
     CALL_VK(vkCreateInstance(&createInfo, VK_ALLOC, out_instance));
 
+#ifdef RENDER_USE_SINGLE_BUFFER
     vkGetPhysicalDeviceSurfaceCapabilities2KHR = reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR>(
             vkGetInstanceProcAddr(*out_instance, "vkGetPhysicalDeviceSurfaceCapabilities2KHR"));
     LOG_D("vkGetPhysicalDeviceSurfaceCapabilities2KHR==%p", vkGetPhysicalDeviceSurfaceCapabilities2KHR);
+#endif
 }
 
 void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface, DeviceInfo *out_deviceInfo, QueueInfo *out_queueInfo) {
@@ -208,9 +210,11 @@ void VkHelper::pickPhyDevAndCreateDev(VkInstance instance, VkSurfaceKHR surface,
 
     vkGetDeviceQueue(out_deviceInfo->device, out_queueInfo->workQueueIndex, 0, &out_queueInfo->queue);
 
+#ifdef RENDER_USE_SINGLE_BUFFER
     vkGetSwapchainStatusKHR = reinterpret_cast<PFN_vkGetSwapchainStatusKHR>(
             vkGetDeviceProcAddr(out_deviceInfo->device, "vkGetSwapchainStatusKHR"));
     LOG_D("vkGetSwapchainStatusKHR==%p", vkGetSwapchainStatusKHR);
+#endif
 }
 
 void VkHelper::printPhysicalDevLog(const VkPhysicalDeviceProperties &devProps) {
@@ -253,6 +257,7 @@ void querySwapchainParam(VkPhysicalDevice physicalDev, VkSurfaceKHR surface, Swa
     out_swapchainParam->extent = out_swapchainParam->capabilities.currentExtent;
     LOG_D("Extent: %d, %d", out_swapchainParam->extent.width, out_swapchainParam->extent.height);
 
+#ifdef RENDER_USE_SINGLE_BUFFER
     VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
             .pNext = nullptr,
@@ -261,6 +266,7 @@ void querySwapchainParam(VkPhysicalDevice physicalDev, VkSurfaceKHR surface, Swa
     out_swapchainParam->capabilities2.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
     out_swapchainParam->capabilities2.pNext = nullptr;
     CALL_VK(vkGetPhysicalDeviceSurfaceCapabilities2KHR(physicalDev, &surfaceInfo, &out_swapchainParam->capabilities2));
+#endif
 
     //format
     uint32_t formatCount;
@@ -515,7 +521,7 @@ void VkHelper::createPipeline(VkDevice device, VkPipelineLayout pipelineLayout, 
             .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
-            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
             .primitiveRestartEnable = VK_FALSE,
     };
 
@@ -809,14 +815,6 @@ void VkHelper::initGeometryBuffers(VkPhysicalDeviceMemoryProperties physicalMemo
     geometry.uniformBuffers.resize(1);
     geometry.uniformMemorys.resize(1);
     geometry.uniformBuffersMapped.resize(1);
-
-    for(uint32_t i = 0; i < 1; i++){
-        createBufferInternal(physicalMemoType, device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                             sizeof(UniformObject), &geometry.uniformBuffers[i], &geometry.uniformMemorys[i]);
-
-        vkMapMemory(device, geometry.uniformMemorys[i], 0, sizeof(UniformObject), 0, &geometry.uniformBuffersMapped[i]);
-    }
 }
 
 void VkHelper::geometryDraw(VkCommandBuffer cmdBuffer, VkPipeline graphicPipeline,
@@ -865,9 +863,10 @@ void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSam
     VkDescriptorSetLayoutBinding layoutBindings[] = {
             {
                     .binding = 0,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 1,
-                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .pImmutableSamplers = immutableSampler == VK_NULL_HANDLE ? nullptr : &immutableSampler
             },
             {
                     .binding = 1,
@@ -890,7 +889,7 @@ void VkHelper::createDescriptorSetLayout(VkDevice device, VkSampler immutableSam
 void VkHelper::createDescriptorPool(VkDevice device, VkDescriptorPool *out_descriptorPool) {
     VkDescriptorPoolSize poolSizeInfo[] = {
             {
-                    .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                     .descriptorCount = 2
             },
             {
@@ -1005,4 +1004,79 @@ void VkHelper::createImageSampler(VkDevice device, VkSampler *out_sampler) {
             .unnormalizedCoordinates = VK_FALSE
     };
     CALL_VK(vkCreateSampler(device, &createInfo, VK_ALLOC, out_sampler));
+}
+
+
+void VkHelper::transition_image_layout(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, VkCommandBuffer command_buffer){
+    VkImageMemoryBarrier barrier;
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.pNext = NULL;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    } else if(old_layout == VK_IMAGE_LAYOUT_PREINITIALIZED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_HOST_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if(old_layout == VK_IMAGE_LAYOUT_PREINITIALIZED && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if(old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else {
+        throw std::invalid_argument("unsupported layout transition!");
+    }
+
+    vkCmdPipelineBarrier(
+            command_buffer,
+            sourceStage, destinationStage,
+            0,
+            0, NULL,
+            0, NULL,
+            1, &barrier
+    );
 }

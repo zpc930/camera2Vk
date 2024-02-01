@@ -4,10 +4,32 @@
 #include "GLShaderUtil.h"
 #include "../Common.h"
 #include "../Camera/AndroidCameraPermission.h"
+#include "../ProfileTrace.h"
 
 const int64_t gFramePeriodNs = (int64_t)(1e9 / 90);  //90FPS
 const float gTimeWarpWaitFramePercentage = 0.5f;
-const bool gTimeWarpDelayBetweenEyes = true;
+const bool gTimeWarpDelayBetweenEyes = false;
+const int gWarpMeshType = 2; //0 = Columns (Left To Right); 1 = Columns (Right To Left); 2 = Rows (Top To Bottom); 3 = Rows (Bottom To Top)
+
+const GLfloat gLeftMeshVertices[] = {
+        -0.95f, 0.95f,
+        -0.95f, -0.95f,
+        -0.05f, 0.95f,
+        -0.05f, -0.95f
+};
+const GLfloat gRightMeshVertices[] = {
+        0.05f, 0.95f,
+        0.05f, -0.95f,
+        0.95f, 0.95f,
+        0.95f, -0.95f
+};
+const GLfloat gMeshTexcoords[] = {
+        0, 0,
+        0, 1,
+        1, 0,
+        1, 1
+};
+
 static uint64_t gLastVsyncTimeNs = 0;
 static void VsyncCallback(long frameTimeNanos, void* data) {
     gLastVsyncTimeNs = frameTimeNanos;
@@ -32,18 +54,31 @@ void GLRenderer::Init(struct android_app *app) {
     InitEGLEnv();
     CreateProgram();
 
-    glGenTextures(1, &yTexture);
-    glGenTextures(1, &uvTexture);
+    glGenTextures(1, &mTextureY);
+    glBindTexture(GL_TEXTURE_2D, mTextureY);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenTextures(1, &mTextureUV);
+    glBindTexture(GL_TEXTURE_2D, mTextureUV);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
     bRunning = true;
 }
 
 void GLRenderer::Destroy() {
     bRunning = false;
-    glDeleteTextures(1, &yTexture);
-    glDeleteTextures(1, &uvTexture);
-    glDeleteShader(m_VertexShader);
-    glDeleteShader(m_FragShader);
-    glDeleteProgram(m_Program);
+    glDeleteTextures(1, &mTextureY);
+    glDeleteTextures(1, &mTextureUV);
+    glDeleteShader(mVertexShader);
+    glDeleteShader(mFragShader);
+    glDeleteProgram(mProgram);
     DestroyEGLEnv();
     CloseCameras();
 }
@@ -53,8 +88,7 @@ bool GLRenderer::IsRunning() {
 }
 
 void GLRenderer::ProcessFrame(uint64_t frameIndex) {
-    LOG_D("Frame start : %lu", frameIndex);
-
+    TRACE_BEGIN("ProcessFrame:%lu", frameIndex);
     AChoreographer *grapher = AChoreographer_getInstance();
     AChoreographer_postFrameCallback(grapher, VsyncCallback, nullptr);
     uint64_t startTimeNs = getTimeNano(CLOCK_MONOTONIC);
@@ -86,80 +120,59 @@ void GLRenderer::ProcessFrame(uint64_t frameIndex) {
     LOG_D("%lu: Left EyeBuffer Wait : %.2f ms, Vsync diff : %.2f ms, Frame diff : %.2f ms, [%lu: %.2f, %.2f]", frameIndex, waitTimeNs * 1.f / U_TIME_1MS_IN_NS,
           vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS, (startTimeNs - mLastFrameTime) * 1.f / U_TIME_1MS_IN_NS, mVsyncCount, framePct, fractFrame);
     mLastFrameTime = startTimeNs;
-    LOG_D("Left wait:%.1f:%.1f", waitTimeNs * 1.f / U_TIME_1MS_IN_NS, vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS);
+    TRACE_BEGIN("Left wait:%.1f:%.1f", waitTimeNs * 1.f / U_TIME_1MS_IN_NS, vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS);
     NanoSleep(waitTimeNs);
+    TRACE_END("Left wait:%.1f:%.1f", waitTimeNs * 1.f / U_TIME_1MS_IN_NS, vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS);
     uint64_t postLeftWaitTimeStamp = getTimeNano(CLOCK_MONOTONIC);
 
-    AHardwareBuffer *hwbufLeft = mImageReaderLeft->getLatestBuffer();
-    LOG_D("Left Render...: %p", hwbufLeft);
-    if(!hwbufLeft){
+    RenderMeshOrder gMeshOrderEnum = MeshOrderLeftToRight;
+    if (gWarpMeshType == 0) {
+        gMeshOrderEnum = MeshOrderLeftToRight;
+    } else if (gWarpMeshType == 1) {
+        gMeshOrderEnum = MeshOrderRightToLeft;
+    } else if (gWarpMeshType == 2) {
+        gMeshOrderEnum = MeshOrderTopToBottom;
+    } else if (gWarpMeshType == 3) {
+        gMeshOrderEnum = MeshOrderBottomToTop;
+    }
+
+    glUseProgram(mProgram);
+    glUniform1i(glGetUniformLocation(mProgram, "y_texture"), 0);
+    glUniform1i(glGetUniformLocation(mProgram, "uv_texture"), 1);
+
+    AImage *imageLeft = mImageReaderLeft->getLatestImage();
+    if(!imageLeft){
         return;
     }
-    glClearColor(0.1f, 0.2f, 0.3f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glUseProgram(m_Program);
-    {
-        GLfloat vertices[] = {
-                -0.9f, -0.8f,
-                -0.1f, -0.8f,
-                -0.9f, 0.8f,
-                -0.1f, 0.8f,
-        };
-        GLfloat colors[] = {
-                1.f, 0.f, 0.f, 1.f,
-                1.f, 0.f, 0.f, 1.f,
-                1.f, 0.f, 0.f, 1.f,
-                1.f, 0.f, 0.f, 1.f
-        };
-        GLfloat texCoords[] = {
-                0.0f, 0.0f,
-                1.0f, 0.0f,
-                0.0f, 1.0f,
-                1.0f, 1.0f
-        };
-        GLuint posLoc = glGetAttribLocation(m_Program, "a_position");
-        glEnableVertexAttribArray(posLoc);
-        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, vertices);
-
-        GLuint colorLoc = glGetAttribLocation(m_Program, "a_color");
-        glEnableVertexAttribArray(colorLoc);
-        glVertexAttribPointer(colorLoc, 4, GL_FLOAT, GL_FALSE, 0, colors);
-
-        GLuint texcoordLoc = glGetAttribLocation(m_Program, "a_texcoord");
-        glEnableVertexAttribArray(texcoordLoc);
-        glVertexAttribPointer(texcoordLoc, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
+    AImage *imageRight = mImageReaderRight->getLatestImage();
+    if(!imageRight){
+        return;
     }
-    {
-        uint8_t outputPixels[1600 * 1600 * 3 / 2];
-        void *hwPtr;
-        AHardwareBuffer_lock(hwbufLeft, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, nullptr, (void**)&hwPtr);
-        memcpy(outputPixels, hwPtr, sizeof(outputPixels));
-        AHardwareBuffer_unlock(hwbufLeft, nullptr);
 
-        glUniform1i(glGetUniformLocation(m_Program, "y_texture"), 0);
-        glUniform1i(glGetUniformLocation(m_Program, "uv_texture"), 1);
+    TRACE_BEGIN("First Render");
+    switch (gMeshOrderEnum) {
+        case MeshOrderLeftToRight:
+            RenderSubArea(imageLeft, MeshLeft);
+            break;
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, yTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 1600, 1600, 0, GL_RED, GL_UNSIGNED_BYTE, outputPixels);
+        case MeshOrderRightToLeft:
+            RenderSubArea(imageRight, MeshRight);
+            break;
 
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, uvTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG, 1600 / 2, 1600 / 2, 0, GL_RG, GL_UNSIGNED_BYTE, outputPixels + 1600 * 1600);
+        case MeshOrderTopToBottom:
+            RenderSubArea(imageLeft, MeshUpperLeft);
+            RenderSubArea(imageRight, MeshUpperRight);
+            break;
+
+        case MeshOrderBottomToTop:
+            RenderSubArea(imageLeft, MeshLowerLeft);
+            RenderSubArea(imageRight, MeshLowerRight);
+            break;
     }
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    //glFlush(); // its important
+#ifdef RENDER_USE_SINGLE_BUFFER
+    glFlush(); // its important
+#endif
+    TRACE_END("First Render");
 
     if (gTimeWarpDelayBetweenEyes) {
         uint64_t rightTimestamp = getTimeNano(CLOCK_MONOTONIC);
@@ -170,62 +183,56 @@ void GLRenderer::ProcessFrame(uint64_t frameIndex) {
         if (delta < ((uint64_t)(gFramePeriodNs / 2.0))) {
             waitTimeNs = ((uint64_t)(gFramePeriodNs / 2.0)) - delta;
             LOG_D("%lu: Right EyeBuffer Wait : %.2f ms, Left take : %.2f ms", frameIndex, waitTimeNs * 1.f / U_TIME_1MS_IN_NS, delta * 1.f / U_TIME_1MS_IN_NS);
+            TRACE_BEGIN("Right wait:%.1f:%.1f", waitTimeNs * 1.f / U_TIME_1MS_IN_NS, vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS);
             NanoSleep(waitTimeNs + gFramePeriodNs / 8);
+            TRACE_END("Right wait:%.1f:%.1f", waitTimeNs * 1.f / U_TIME_1MS_IN_NS, vsyncDiffTimeNs * 1.f / U_TIME_1MS_IN_NS);
         } else {
             //The left eye took longer than 1/2 the refresh so the raster has already wrapped around and is
             //in the left half of the screen.  Skip the wait and get right on rendering the right eye.
             LOG_D("Left Eye took too long!!! ( %.2f ms )", delta * 1.f / U_TIME_1MS_IN_NS);
         }
     }
-//    AHardwareBuffer *hwbufRight = mImageReaderRight->getLatestBuffer();
-//    LOG_D("Right Render...:%p", hwbufRight);
 
-    {
-        GLfloat vertices[] = {
-                0.1f, -0.8f,
-                0.9f, -0.8f,
-                0.1f, 0.8f,
-                0.9f, 0.8f,
-        };
-        GLfloat colors[] = {
-                0.f, 1.f, 0.f, 1.f,
-                0.f, 1.f, 0.f, 1.f,
-                0.f, 1.f, 0.f, 1.f,
-                0.f, 1.f, 0.f, 1.f
-        };
-        GLfloat texCoords[] = {
-                0.0f, 0.0f,
-                1.0f, 0.0f,
-                0.0f, 1.0f,
-                1.0f, 1.0f
-        };
-        GLuint posLoc = glGetAttribLocation(m_Program, "a_position");
-        glEnableVertexAttribArray(posLoc);
-        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    TRACE_BEGIN("Second Render");
+    switch (gMeshOrderEnum) {
+        case MeshOrderLeftToRight:
+            RenderSubArea(imageRight, MeshRight);
+            break;
 
-        GLuint colorLoc = glGetAttribLocation(m_Program, "a_color");
-        glEnableVertexAttribArray(colorLoc);
-        glVertexAttribPointer(colorLoc, 4, GL_FLOAT, GL_FALSE, 0, colors);
+        case MeshOrderRightToLeft:
+            RenderSubArea(imageLeft, MeshLeft);
+            break;
 
-        GLuint texcoordLoc = glGetAttribLocation(m_Program, "a_texcoord");
-        glEnableVertexAttribArray(texcoordLoc);
-        glVertexAttribPointer(texcoordLoc, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
+        case MeshOrderTopToBottom:
+            RenderSubArea(imageLeft, MeshLowerLeft);
+            RenderSubArea(imageRight, MeshLowerRight);
+            break;
+
+        case MeshOrderBottomToTop:
+            RenderSubArea(imageLeft, MeshUpperLeft);
+            RenderSubArea(imageRight, MeshUpperRight);
+            break;
     }
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+#ifdef RENDER_USE_SINGLE_BUFFER
+    glFlush(); // its important
+#else
     eglSwapBuffers(m_EglDisplay, m_EglSurface);
+#endif
+    TRACE_END("Second Render");
+    TRACE_END("ProcessFrame:%lu", frameIndex);
 }
 
 void GLRenderer::OpenCameras() {
     if(!AndroidCameraPermission::isCameraPermitted(mApp)){
         AndroidCameraPermission::requestCameraPermission(mApp);
     }
-    mImageReaderLeft = new CameraImageReader(1600, 1600, AIMAGE_FORMAT_PRIVATE, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4);
-    mCameraLeft = new CameraManager(mImageReaderLeft->getWindow(), 0);
+    mImageReaderLeft = new CameraImageReader(1920, 1440, AIMAGE_FORMAT_YUV_420_888, 4);
+    mCameraLeft = new CameraManager(mImageReaderLeft->getWindow(), 2);
     mCameraLeft->startCapturing();
 
-//    mImageReaderRight= new CameraImageReader(1600, 1600, AIMAGE_FORMAT_PRIVATE, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4);
-//    mCameraRight = new CameraManager(mImageReaderRight->getWindow(), 1);
-//    mCameraRight->startCapturing();
+    mImageReaderRight= new CameraImageReader(1920, 1440, AIMAGE_FORMAT_YUV_420_888, 4);
+    mCameraRight = new CameraManager(mImageReaderRight->getWindow(), 3);
+    mCameraRight->startCapturing();
 }
 
 void GLRenderer::CloseCameras() {
@@ -257,6 +264,9 @@ int GLRenderer::InitEGLEnv() {
     };
 
     const EGLint surfaceAttr[] = {
+#ifdef RENDER_USE_SINGLE_BUFFER
+            EGL_RENDER_BUFFER, EGL_SINGLE_BUFFER,
+#endif
             EGL_NONE
     };
     EGLint eglMajVers, eglMinVers;
@@ -279,14 +289,14 @@ int GLRenderer::InitEGLEnv() {
         }
         LOG_D("GLRenderer::CreateGlesEnv EGL init with version %d.%d", eglMajVers, eglMinVers);
 
-        if(!eglChooseConfig(m_EglDisplay, confAttr, &m_EglConfig, 1, &numConfigs)) {
+        if(!eglChooseConfig(m_EglDisplay, confAttr, &mEglConfig, 1, &numConfigs)) {
             LOG_E("GLRenderer::CreateGlesEnv some config is wrong");
             resultCode = -1;
             break;
         }
 
-        //m_EglSurface = eglCreatePbufferSurface(m_EglDisplay, m_EglConfig, surfaceAttr);
-        m_EglSurface = eglCreateWindowSurface(m_EglDisplay, m_EglConfig, mApp->window, surfaceAttr);
+        //m_EglSurface = eglCreatePbufferSurface(m_EglDisplay, mEglConfig:, surfaceAttr);
+        m_EglSurface = eglCreateWindowSurface(m_EglDisplay, mEglConfig, mApp->window, surfaceAttr);
         if(m_EglSurface == EGL_NO_SURFACE) {
             switch(eglGetError()) {
                 case EGL_BAD_ALLOC:
@@ -303,8 +313,13 @@ int GLRenderer::InitEGLEnv() {
                     break;
             }
         }
+#ifdef RENDER_USE_SINGLE_BUFFER
+        if(!eglSurfaceAttrib(m_EglDisplay, m_EglSurface, EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID, 1)){
+            LOG_E("GLRenderer::eglSurfaceAttrib EGL_FRONT_BUFFER_AUTO_REFRESH_ANDROID fail.");
+        }
+#endif
 
-        m_EglContext = eglCreateContext(m_EglDisplay, m_EglConfig, EGL_NO_CONTEXT, ctxAttr);
+        m_EglContext = eglCreateContext(m_EglDisplay, mEglConfig, EGL_NO_CONTEXT, ctxAttr);
         if(m_EglContext == EGL_NO_CONTEXT) {
             EGLint error = eglGetError();
             if(error == EGL_BAD_CONFIG) {
@@ -344,9 +359,89 @@ void GLRenderer::DestroyEGLEnv() {
 void GLRenderer::CreateProgram() {
 //    std::vector<char> vsSource = ReadFileFromAndroidRes("shaders/gles/camera_preview.vert");
 //    std::vector<char> fsSource = ReadFileFromAndroidRes("shaders/gles/camera_preview.frag");
-//    m_VertexShader = CreateGLShader(std::string(vsSource.data(), vsSource.size()).c_str(), GL_VERTEX_SHADER);
-//    m_FragShader = CreateGLShader(std::string(fsSource.data(), fsSource.size()).c_str(), GL_FRAGMENT_SHADER);
-    m_VertexShader = CreateGLShader(vertexShader, GL_VERTEX_SHADER);
-    m_FragShader = CreateGLShader(fragYUV420P, GL_FRAGMENT_SHADER);
-    m_Program = CreateGLProgram(m_VertexShader, m_FragShader);
+//    mVertexShader = CreateGLShader(std::string(vsSource.data(), vsSource.size()).c_str(), GL_VERTEX_SHADER);
+//    mFragShader = CreateGLShader(std::string(fsSource.data(), fsSource.size()).c_str(), GL_FRAGMENT_SHADER);
+    mVertexShader = CreateGLShader(vertexShader, GL_VERTEX_SHADER);
+    mFragShader = CreateGLShader(fragYUV420P, GL_FRAGMENT_SHADER);
+    mProgram = CreateGLProgram(mVertexShader, mFragShader);
+}
+
+void GLRenderer::RenderSubArea(const AImage *image, RenderMeshArea area) {
+    int surfaceWidth, surfaceHeight;
+    eglQuerySurface(m_EglDisplay, m_EglSurface, EGL_WIDTH, &surfaceWidth);
+    eglQuerySurface(m_EglDisplay, m_EglSurface, EGL_HEIGHT, &surfaceHeight);
+    glEnable(GL_SCISSOR_TEST);
+    switch (area) {
+        case MeshLeft:
+            glScissor(0, 0, surfaceWidth / 2, surfaceHeight);
+            glClearColor(1.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+        case MeshRight:
+            glScissor(surfaceWidth / 2, 0, surfaceWidth / 2, surfaceHeight);
+            glClearColor(0.f, 1.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+        case MeshUpperLeft:
+            glScissor(0, surfaceHeight / 2, surfaceWidth / 2, surfaceHeight / 2);
+            glClearColor(1.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+        case MeshUpperRight:
+            glScissor(surfaceWidth / 2, surfaceHeight / 2, surfaceWidth / 2, surfaceHeight / 2);
+            glClearColor(0.f, 1.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+        case MeshLowerLeft:
+            glScissor(0, 0, surfaceWidth / 2, surfaceHeight / 2);
+            glClearColor(1.f, 1.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+        case MeshLowerRight:
+            glScissor(surfaceWidth / 2, 0, surfaceWidth / 2, surfaceHeight / 2);
+            glClearColor(0.f, 1.f, 1.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            break;
+    }
+
+    int eyeIndex = 0;
+    if(area == MeshLeft | area == MeshUpperLeft | area == MeshLowerLeft){
+        eyeIndex = 0;
+        GLuint posLoc = glGetAttribLocation(mProgram, "a_position");
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, gLeftMeshVertices);
+    } else {
+        eyeIndex = 1;
+        GLuint posLoc = glGetAttribLocation(mProgram, "a_position");
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, gRightMeshVertices);
+    }
+    GLuint texcoordLoc = glGetAttribLocation(mProgram, "a_texcoord");
+    glEnableVertexAttribArray(texcoordLoc);
+    glVertexAttribPointer(texcoordLoc, 2, GL_FLOAT, GL_FALSE, 0, gMeshTexcoords);
+
+    int64_t timeStamp = 0;
+    AImage_getTimestamp(image, &timeStamp);
+    int64_t diffNs = getTimeNano(CLOCK_MONOTONIC) - timeStamp;
+    LOG_D("%s Update:%.2f, %lu", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS, timeStamp);
+    int width, height;
+    int numPlanes = 0;
+    uint8_t *yData, *uvData;
+    int32_t yDataLen = 0, uvDataLen = 0;
+    TRACE_BEGIN("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
+    AImage_getWidth(image, &width);
+    AImage_getHeight(image, &height);
+    AImage_getNumberOfPlanes(image, &numPlanes);
+    AImage_getPlaneData(image, 0, &yData, &yDataLen);
+    AImage_getPlaneData(image, 1, &uvData, &uvDataLen);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mTextureY);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, mTextureUV);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, width / 2, height / 2, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, uvData);
+    TRACE_END("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

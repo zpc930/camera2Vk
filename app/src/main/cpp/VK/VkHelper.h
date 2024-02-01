@@ -55,6 +55,7 @@ public:
                                VkImage *out_image, VkDeviceMemory *out_imageMemory);
     static void createImageView(VkDevice device, VkImage image, VkImageViewType viewType, VkFormat format, VkImageAspectFlags aspectMask, VkImageView *out_imageView);
     static void createImageSampler(VkDevice device, VkSampler *out_sampler);
+    static void transition_image_layout(VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, VkCommandBuffer command_buffer);
 };
 
 #endif //LEARN_VULKAN_VKHELPER_H

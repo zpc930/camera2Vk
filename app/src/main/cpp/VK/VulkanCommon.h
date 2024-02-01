@@ -12,8 +12,6 @@
 #define VK_ALLOC nullptr
 #define APP_NAME "Camera2Vk"
 
-#define RENDER_USE_SINGLE_BUFFER
-
 typedef struct
 {
     const char      *name;

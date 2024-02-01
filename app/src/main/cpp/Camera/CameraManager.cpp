@@ -1,6 +1,7 @@
 #include "CameraManager.h"
 #include <stdexcept>
 #include <sstream>
+#include <media/NdkImage.h>
 #include "../Common.h"
 
 CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex)
@@ -45,8 +46,6 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
     for(uint32_t i = 0; i < mIds->numCameras; ++i)
     {
         auto cam_id = mIds->cameraIds[i];
-        LOG_D("camera %s", cam_id);
-
         ACameraMetadata* metadata = nullptr;
         result = ACameraManager_getCameraCharacteristics(mManager.get(), cam_id, &metadata);
         if(result != ACAMERA_OK || !metadata)
@@ -59,6 +58,15 @@ CameraManager::CameraManager(ANativeWindow *nativeWindow, uint8_t selectCamIndex
             // Select which camera to use (front or back)
             if(facing == ACAMERA_LENS_FACING_BACK)
                 selectedCamera = std::string(cam_id);
+        }
+        if(ACameraMetadata_getConstEntry(metadata, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, &entry) == ACAMERA_OK){
+            for (size_t n = 0; n < entry.count; n += 4) {
+                int32_t format = entry.data.i32[n];
+                int32_t width = entry.data.i32[n + 1];
+                int32_t height = entry.data.i32[n + 2];
+                int32_t input = entry.data.i32[n + 3];
+                LOG_W("cxh--> Camera[%s]: Format: %d[%d], Width: %d, Height: %d, Input: %d", cam_id, format, AIMAGE_FORMAT_YUV_420_888, width, height, input);
+            }
         }
         ACameraMetadata_free(metadata);
     }
