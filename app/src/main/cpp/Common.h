@@ -10,9 +10,9 @@
 #include <ctime>
 
 #define LOG_TAG "Camera2Vk"
-//#define GRAPHIC_API_GLES
+#define GRAPHIC_API_GLES
 #define GRAPHIC_API_VK
-//#define RENDER_USE_SINGLE_BUFFER
+#define RENDER_USE_SINGLE_BUFFER
 
 #ifndef ALOG
 #define ALOG(priority, tag, fmt...) \

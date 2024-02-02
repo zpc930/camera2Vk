@@ -5,8 +5,6 @@
 #define IMAGE_HEIGHT 1440
 
 VkCameraImageV2::VkCameraImageV2(VkBundle *vk){
-    this->mImgBuffer = VK_NULL_HANDLE;
-    this->mImgBufferMemory = VK_NULL_HANDLE;
     mVkBundle = vk;
     init();
 }
@@ -16,17 +14,16 @@ VkCameraImageV2::~VkCameraImageV2() {
 }
 
 void VkCameraImageV2::init() {
-    size_t dataSize = IMAGE_WIDTH * IMAGE_HEIGHT * 3 / 2;
     VkHelper::createBuffer(mVkBundle->deviceInfo.physicalDevMemoProps, mVkBundle->deviceInfo.device, mVkBundle->cmdPool, mVkBundle->queueInfo.queue,
                   VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, dataSize, nullptr, &mImgBuffer, &mImgBufferMemory);
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, IMAGE_WIDTH * IMAGE_HEIGHT, nullptr, &mBufferY, &mBufferMemoryY);
+    VkHelper::createBuffer(mVkBundle->deviceInfo.physicalDevMemoProps, mVkBundle->deviceInfo.device, mVkBundle->cmdPool, mVkBundle->queueInfo.queue,
+                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, IMAGE_WIDTH * IMAGE_HEIGHT, nullptr, &mBufferUV, &mBufferMemoryUV);
     VkCommandBuffer cmdBuffer;
     VkHelper::allocateCommandBuffers(mVkBundle->deviceInfo.device, mVkBundle->cmdPool, 1, &cmdBuffer);
     VkHelper::beginCommandBuffer(cmdBuffer, true);
     for(auto & cameraImage : mCameraImages) {
-        //because YUV 4:2:0, 4Y->1UV, 8+2+2 = 12bits --> 1.5byte, so multi 1.5
-        cameraImage.mDataSize = dataSize;
-
         // y plane
         initImgs(VK_FORMAT_R8_UNORM, IMAGE_WIDTH, IMAGE_HEIGHT, cmdBuffer,
                  &cameraImage.yImg.mImg, &cameraImage.yImg.mMemory,
@@ -124,13 +121,35 @@ void VkCameraImageV2::initImgs(VkFormat format, uint32_t width, uint32_t height,
     CALL_VK(vkCreateSampler(mVkBundle->deviceInfo.device, &samplerCreateInfo, VK_ALLOC, outSampler));
 }
 
-void VkCameraImageV2::updateImg(uint64_t frameIndex, uint32_t eyeIndex, const AImage *image) {
+void VkCameraImageV2::updateImg(uint32_t eyeIndex, const AImage *image) {
     if(!image){
         return;
     }
-    VkCameraImage cameraImage = mCameraImages[eyeIndex];
-    //readHardwareBuffer(mVkBundle, frameIndex, eyeIndex, buf, cameraImage.mDataSize, 0, mImgBufferMemory);
 
+    int64_t timeStamp = 0;
+    AImage_getTimestamp(image, &timeStamp);
+    int64_t diffNs = getTimeNano(CLOCK_MONOTONIC) - timeStamp;
+    LOG_D("%s Update:%.2f, %lu", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS, timeStamp);
+    int width, height;
+    int numPlanes = 0;
+    uint8_t *yData, *uvData;
+    int32_t yDataLen = 0, uvDataLen = 0;
+    AImage_getWidth(image, &width);
+    AImage_getHeight(image, &height);
+    AImage_getNumberOfPlanes(image, &numPlanes);
+    AImage_getPlaneData(image, 0, &yData, &yDataLen);
+    AImage_getPlaneData(image, 1, &uvData, &uvDataLen);
+
+    void *mapped;
+    vkMapMemory(mVkBundle->deviceInfo.device, mBufferMemoryY, 0, yDataLen, 0, &mapped);
+    memcpy(mapped, yData, yDataLen);
+    vkUnmapMemory(mVkBundle->deviceInfo.device, mBufferMemoryY);
+
+    vkMapMemory(mVkBundle->deviceInfo.device, mBufferMemoryUV, 0, uvDataLen, 0, &mapped);
+    memcpy(mapped, uvData, uvDataLen);
+    vkUnmapMemory(mVkBundle->deviceInfo.device, mBufferMemoryUV);
+
+    VkCameraImage cameraImage = mCameraImages[eyeIndex];
     VkCommandBuffer cmdBuffer;
     VkHelper::allocateCommandBuffers(mVkBundle->deviceInfo.device, mVkBundle->cmdPool, 1, &cmdBuffer);
     VkHelper::beginCommandBuffer(cmdBuffer, true);
@@ -149,10 +168,10 @@ void VkCameraImageV2::updateImg(uint64_t frameIndex, uint32_t eyeIndex, const AI
             .imageOffset = {0, 0, 0},
             .imageExtent = { IMAGE_WIDTH, IMAGE_HEIGHT, 1},
     };
-    vkCmdCopyBufferToImage(cmdBuffer, mImgBuffer, cameraImage.yImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bufferCopyRegions);
-    bufferCopyRegions.bufferOffset = IMAGE_WIDTH * IMAGE_HEIGHT;
+    vkCmdCopyBufferToImage(cmdBuffer, mBufferY, cameraImage.yImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bufferCopyRegions);
+    bufferCopyRegions.bufferOffset = 0;
     bufferCopyRegions.imageExtent = { IMAGE_WIDTH / 2, IMAGE_HEIGHT / 2, 1 };
-    vkCmdCopyBufferToImage(cmdBuffer, mImgBuffer, cameraImage.uvImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bufferCopyRegions);
+    vkCmdCopyBufferToImage(cmdBuffer, mBufferUV, cameraImage.uvImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bufferCopyRegions);
 
     VkHelper::transition_image_layout(cameraImage.yImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, cmdBuffer);
     VkHelper::transition_image_layout(cameraImage.uvImg.mImg, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, cmdBuffer);
@@ -221,7 +240,9 @@ void VkCameraImageV2::destroyImgs() {
             cameraImg.uvImg.mSampler = VK_NULL_HANDLE;
         }
     }
-    vkDestroyBuffer(mVkBundle->deviceInfo.device, mImgBuffer, VK_ALLOC);
-    vkFreeMemory(mVkBundle->deviceInfo.device, mImgBufferMemory, VK_ALLOC);
+    vkDestroyBuffer(mVkBundle->deviceInfo.device, mBufferY, VK_ALLOC);
+    vkFreeMemory(mVkBundle->deviceInfo.device, mBufferMemoryY, VK_ALLOC);
+    vkDestroyBuffer(mVkBundle->deviceInfo.device, mBufferUV, VK_ALLOC);
+    vkFreeMemory(mVkBundle->deviceInfo.device, mBufferMemoryUV, VK_ALLOC);
 }
 

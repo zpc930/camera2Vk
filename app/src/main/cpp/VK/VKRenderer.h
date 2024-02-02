@@ -39,7 +39,7 @@ private:
 
     void CreateWindowSurface();
     void InitGeometry();
-    void UpdateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t eyeIndex, const AImage *image);
+    void UpdateDescriptorSets(uint8_t eyeIndex, const AImage *image);
 
     struct android_app *mApp;
     bool bRunning = false;
@@ -52,7 +52,7 @@ private:
     uint64_t mVsyncCount = 0;
     uint64_t mLastFrameTime = 0;
 
-    uint32_t mCurrentImageIndex;
+    uint32_t mCurrentImageIndex = 0;
     VkBundle mVk;                            // vulkan bundle
     Geometry mGeometryLeft;
     Geometry mGeometryRight;

@@ -10,7 +10,8 @@
 const int64_t gFramePeriodNs = (int64_t)(1e9 / 90);  //90FPS
 const float gTimeWarpWaitFramePercentage = 0.5f;
 const bool gTimeWarpDelayBetweenEyes = false;
-const int gWarpMeshType = 0; //0 = Columns (Left To Right); 1 = Columns (Right To Left); 2 = Rows (Top To Bottom); 3 = Rows (Bottom To Top)
+const int gWarpMeshType = 2; //0 = Columns (Left To Right); 1 = Columns (Right To Left); 2 = Rows (Top To Bottom); 3 = Rows (Bottom To Top)
+const bool gRenderVst = true;
 
 static uint64_t gLastVsyncTimeNs = 0;
 static void VsyncCallback(long frameTimeNanos, void* data) {
@@ -109,7 +110,6 @@ void VKRenderer::ProcessFrame(uint64_t frameIndex) {
         return;
     }
 
-#ifndef RENDER_USE_SINGLE_BUFFER
     VkResult rt = vkAcquireNextImageKHR(mVk.deviceInfo.device, mVk.swapchain, std::numeric_limits<uint64_t>::max(), mVk.imageSemaphore, VK_NULL_HANDLE, &mCurrentImageIndex);
     LOG_D("image index: %d", mCurrentImageIndex);
 
@@ -117,7 +117,11 @@ void VKRenderer::ProcessFrame(uint64_t frameIndex) {
         LOG_E("swapchain was out of date.");
         return;
     }
-#endif
+
+    TRACE_BEGIN("UpdateDescriptorSets");
+    UpdateDescriptorSets(0, imageLeft);
+    UpdateDescriptorSets(1, imageRight);
+    TRACE_END("UpdateDescriptorSets");
 
     TRACE_BEGIN("First Render");
     switch (gMeshOrderEnum) {
@@ -140,7 +144,17 @@ void VKRenderer::ProcessFrame(uint64_t frameIndex) {
             break;
     }
 #ifdef RENDER_USE_SINGLE_BUFFER
-    glFlush(); // its important
+    VkPresentInfoKHR presentInfo = {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &mVk.presentSemaphore,
+            .swapchainCount = 1,
+            .pSwapchains = &mVk.swapchain,
+            .pImageIndices = &mCurrentImageIndex,
+            .pResults = nullptr
+    };
+    CALL_VK(vkQueuePresentKHR(mVk.queueInfo.queue, &presentInfo));
 #endif
     TRACE_END("First Render");
 
@@ -184,7 +198,7 @@ void VKRenderer::ProcessFrame(uint64_t frameIndex) {
             break;
     }
 #ifdef RENDER_USE_SINGLE_BUFFER
-    glFlush(); // its important
+    CALL_VK(vkQueuePresentKHR(mVk.queueInfo.queue, &presentInfo));
 #else
     VkPresentInfoKHR presentInfo = {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -338,26 +352,62 @@ void VKRenderer::RenderSubArea(const AImage *image, RenderMeshArea area) {
     };
     CALL_VK(vkBeginCommandBuffer(cmdBuffer, &cmdBufferBeginInfo));
 
+    uint32_t surfaceWidth = mVk.swapchainParam.extent.width;
+    uint32_t surfaceHeight = mVk.swapchainParam.extent.height;
     VkClearValue defaultClearValues = { 0.1f,  0.2f,  0.3f,  1.0f};
+    VkRect2D renderArea = { 0, 0, mVk.swapchainParam.extent };
+    VkRect2D scissor = { 0, 0, surfaceWidth, surfaceHeight };
+    switch (area) {
+        case MeshLeft:
+            defaultClearValues = { 1.f, 0.f, 0.f, 1.f };
+            renderArea = { 0, 0, surfaceWidth / 2, surfaceHeight };
+            scissor = { 0, 0, surfaceWidth / 2, surfaceHeight };
+            break;
+        case MeshRight:
+            defaultClearValues = { 0.f, 1.f, 0.f, 1.f };
+            renderArea = { static_cast<int32_t>(surfaceWidth / 2), 0, surfaceWidth / 2, surfaceHeight };
+            scissor = { static_cast<int32_t>(surfaceWidth / 2), 0, surfaceWidth / 2, surfaceHeight };
+            break;
+        case MeshUpperLeft:
+            defaultClearValues = { 1.f, 0.f, 0.f, 1.f };
+            renderArea = { 0, 0, surfaceWidth / 2, surfaceHeight / 2 };
+            scissor = { 0, 0, surfaceWidth / 2, surfaceHeight / 2 };
+            break;
+        case MeshUpperRight:
+            defaultClearValues = { 0.f, 1.f, 0.f, 1.f };
+            renderArea = { static_cast<int32_t>(surfaceWidth / 2), 0, surfaceWidth / 2, surfaceHeight / 2 };
+            scissor = { static_cast<int32_t>(surfaceWidth / 2), 0, surfaceWidth / 2, surfaceHeight / 2 };
+            break;
+        case MeshLowerLeft:
+            defaultClearValues = { 1.f, 1.f, 0.f, 1.f };
+            renderArea = { 0, static_cast<int32_t>(surfaceHeight / 2), surfaceWidth / 2, surfaceHeight / 2 };
+            scissor = { 0, static_cast<int32_t>(surfaceHeight / 2), surfaceWidth / 2, surfaceHeight / 2 };
+            break;
+        case MeshLowerRight:
+            defaultClearValues = { 0.f, 1.f, 1.f, 1.f };
+            renderArea = { static_cast<int32_t>(surfaceWidth / 2), static_cast<int32_t>(surfaceHeight / 2), surfaceWidth / 2, surfaceHeight / 2 };
+            scissor = { static_cast<int32_t>(surfaceWidth / 2), static_cast<int32_t>(surfaceHeight / 2), surfaceWidth / 2, surfaceHeight / 2 };
+            break;
+    }
     VkRenderPassBeginInfo renderPassBeginInfo = {
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .pNext = nullptr,
             .renderPass = mVk.renderPass,
             .framebuffer = mVk.framebuffers[mCurrentImageIndex],
-            .renderArea = {
-                    .offset = {0, 0},
-                    .extent = mVk.swapchainParam.extent
-            },
+            .renderArea = renderArea,
             .clearValueCount = 1,
             .pClearValues = &defaultClearValues,
     };
     vkCmdBeginRenderPass(cmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mVk.graphicPipeline);
-    UpdateDescriptorSets(cmdBuffer, eyeIndex, image);
-    if(mVk.descriptorSets != VK_NULL_HANDLE){
-        vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mVk.pipelineLayout, 0, 1, &mVk.descriptorSets[eyeIndex], 0, nullptr);
+    vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+
+    if(gRenderVst){
+        vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mVk.graphicPipeline);
+        if(mVk.descriptorSets != VK_NULL_HANDLE){
+            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mVk.pipelineLayout, 0, 1, &mVk.descriptorSets[eyeIndex], 0, nullptr);
+        }
+        VkHelper::geometryDraw(cmdBuffer, mVk.graphicPipeline, mVk.swapchainParam, eyeIndex == 0 ? mGeometryLeft : mGeometryRight);
     }
-    VkHelper::geometryDraw(cmdBuffer, mVk.graphicPipeline, mVk.swapchainParam, eyeIndex == 0 ? mGeometryLeft : mGeometryRight);
 
     vkCmdEndRenderPass(cmdBuffer);
     CALL_VK(vkEndCommandBuffer(cmdBuffer));
@@ -408,8 +458,26 @@ void VKRenderer::InitGeometry(){
     VkHelper::initGeometryBuffers(mVk.deviceInfo.physicalDevMemoProps, mVk.deviceInfo.device, mVk.cmdPool, mVk.queueInfo.queue, mGeometryRight);
 }
 
-void VKRenderer::UpdateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t eyeIndex, const AImage *image){
-    mImageLeft->updateImg();
+void VKRenderer::UpdateDescriptorSets(uint8_t eyeIndex, const AImage *image){
+    VkCameraImageV2 *cameraImage = nullptr;
+    if(eyeIndex == 0){
+        cameraImage = mImageLeft;
+    } else {
+        cameraImage = mImageRight;
+    }
+    cameraImage->updateImg(eyeIndex, image);
+
+    VkDescriptorImageInfo imageInfoY = {
+            .sampler = cameraImage->getSampler(eyeIndex, PLANE_Y),
+            .imageView = cameraImage->getImgView(eyeIndex, PLANE_Y),
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    };
+    VkDescriptorImageInfo imageInfoUV = {
+            .sampler = cameraImage->getSampler(eyeIndex, PLANE_UV),
+            .imageView = cameraImage->getImgView(eyeIndex, PLANE_UV),
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    };
+
     VkWriteDescriptorSet writeDescSets[] = {
             {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -419,7 +487,7 @@ void VKRenderer::UpdateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t eyeInde
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .pBufferInfo = &imageInfo
+                    .pImageInfo = &imageInfoY
             },
             {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -427,9 +495,9 @@ void VKRenderer::UpdateDescriptorSets(VkCommandBuffer cmdBuffer, uint8_t eyeInde
                     .dstSet = mVk.descriptorSets[eyeIndex],
                     .dstBinding = 1,
                     .dstArrayElement = 0,
-                    .descriptorCount = ARRAY_SIZE(imageInfo),
+                    .descriptorCount = 1,
                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                    .pImageInfo = imageInfo
+                    .pImageInfo = &imageInfoUV
             }
     };
     vkUpdateDescriptorSets(mVk.deviceInfo.device, ARRAY_SIZE(writeDescSets), writeDescSets, 0, nullptr);

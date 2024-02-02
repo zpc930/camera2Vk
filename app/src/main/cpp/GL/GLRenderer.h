@@ -40,6 +40,7 @@ private:
     void DestroyEGLEnv();
     std::vector<char> ReadFileFromAndroidRes(const std::string& filePath);
     void CreateProgram();
+    void UpdateTextures(uint32_t eyeIndex, const AImage *image);
     void RenderSubArea(const AImage *image, RenderMeshArea area);
 
     struct android_app *mApp;
@@ -56,8 +57,10 @@ private:
     GLint mVertexShader;
     GLint mFragShader;
     GLuint mProgram;
-    GLuint mTextureY;
-    GLuint mTextureUV;
+    GLuint mLeftTextureY;
+    GLuint mLeftTextureUV;
+    GLuint mRightTextureY;
+    GLuint mRightTextureUV;
 
     uint64_t mLastVsyncTimeNs = 0;
     uint64_t mVsyncCount = 0;

@@ -54,15 +54,29 @@ void GLRenderer::Init(struct android_app *app) {
     InitEGLEnv();
     CreateProgram();
 
-    glGenTextures(1, &mTextureY);
-    glBindTexture(GL_TEXTURE_2D, mTextureY);
+    glGenTextures(1, &mLeftTextureY);
+    glBindTexture(GL_TEXTURE_2D, mLeftTextureY);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glGenTextures(1, &mTextureUV);
-    glBindTexture(GL_TEXTURE_2D, mTextureUV);
+    glGenTextures(1, &mLeftTextureUV);
+    glBindTexture(GL_TEXTURE_2D, mLeftTextureUV);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenTextures(1, &mRightTextureY);
+    glBindTexture(GL_TEXTURE_2D, mRightTextureY);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenTextures(1, &mRightTextureUV);
+    glBindTexture(GL_TEXTURE_2D, mRightTextureUV);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -74,8 +88,10 @@ void GLRenderer::Init(struct android_app *app) {
 
 void GLRenderer::Destroy() {
     bRunning = false;
-    glDeleteTextures(1, &mTextureY);
-    glDeleteTextures(1, &mTextureUV);
+    glDeleteTextures(1, &mLeftTextureY);
+    glDeleteTextures(1, &mLeftTextureUV);
+    glDeleteTextures(1, &mRightTextureY);
+    glDeleteTextures(1, &mRightTextureUV);
     glDeleteShader(mVertexShader);
     glDeleteShader(mFragShader);
     glDeleteProgram(mProgram);
@@ -148,6 +164,11 @@ void GLRenderer::ProcessFrame(uint64_t frameIndex) {
     if(!imageRight){
         return;
     }
+
+    TRACE_BEGIN("UpdateDescriptorSets");
+    UpdateTextures(0, imageLeft);
+    UpdateTextures(1, imageRight);
+    TRACE_END("UpdateDescriptorSets");
 
     TRACE_BEGIN("First Render");
     switch (gMeshOrderEnum) {
@@ -366,6 +387,30 @@ void GLRenderer::CreateProgram() {
     mProgram = CreateGLProgram(mVertexShader, mFragShader);
 }
 
+void GLRenderer::UpdateTextures(uint32_t eyeIndex, const AImage *image) {
+    int64_t timeStamp = 0;
+    AImage_getTimestamp(image, &timeStamp);
+    int64_t diffNs = getTimeNano(CLOCK_MONOTONIC) - timeStamp;
+    LOG_D("%s Update:%.2f, %lu", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS, timeStamp);
+    int width, height;
+    int numPlanes = 0;
+    uint8_t *yData, *uvData;
+    int32_t yDataLen = 0, uvDataLen = 0;
+    TRACE_BEGIN("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
+    AImage_getWidth(image, &width);
+    AImage_getHeight(image, &height);
+    AImage_getNumberOfPlanes(image, &numPlanes);
+    AImage_getPlaneData(image, 0, &yData, &yDataLen);
+    AImage_getPlaneData(image, 2, &uvData, &uvDataLen);
+
+    glBindTexture(GL_TEXTURE_2D, eyeIndex == 0 ? mLeftTextureY : mRightTextureY);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData);
+
+    glBindTexture(GL_TEXTURE_2D, eyeIndex == 0 ? mLeftTextureUV : mRightTextureUV);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, width / 2, height / 2, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, uvData);
+    TRACE_END("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
+}
+
 void GLRenderer::RenderSubArea(const AImage *image, RenderMeshArea area) {
     int surfaceWidth, surfaceHeight;
     eglQuerySurface(m_EglDisplay, m_EglSurface, EGL_WIDTH, &surfaceWidth);
@@ -410,38 +455,23 @@ void GLRenderer::RenderSubArea(const AImage *image, RenderMeshArea area) {
         GLuint posLoc = glGetAttribLocation(mProgram, "a_position");
         glEnableVertexAttribArray(posLoc);
         glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, gLeftMeshVertices);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mLeftTextureY);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mLeftTextureUV);
     } else {
         eyeIndex = 1;
         GLuint posLoc = glGetAttribLocation(mProgram, "a_position");
         glEnableVertexAttribArray(posLoc);
         glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 0, gRightMeshVertices);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mRightTextureY);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mRightTextureUV);
     }
     GLuint texcoordLoc = glGetAttribLocation(mProgram, "a_texcoord");
     glEnableVertexAttribArray(texcoordLoc);
     glVertexAttribPointer(texcoordLoc, 2, GL_FLOAT, GL_FALSE, 0, gMeshTexcoords);
 
-    int64_t timeStamp = 0;
-    AImage_getTimestamp(image, &timeStamp);
-    int64_t diffNs = getTimeNano(CLOCK_MONOTONIC) - timeStamp;
-    LOG_D("%s Update:%.2f, %lu", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS, timeStamp);
-    int width, height;
-    int numPlanes = 0;
-    uint8_t *yData, *uvData;
-    int32_t yDataLen = 0, uvDataLen = 0;
-    TRACE_BEGIN("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
-    AImage_getWidth(image, &width);
-    AImage_getHeight(image, &height);
-    AImage_getNumberOfPlanes(image, &numPlanes);
-    AImage_getPlaneData(image, 0, &yData, &yDataLen);
-    AImage_getPlaneData(image, 1, &uvData, &uvDataLen);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, mTextureY);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yData);
-
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, mTextureUV);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, width / 2, height / 2, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, uvData);
-    TRACE_END("%s Update:%.2f", eyeIndex == 0 ? "Left" : "Right", (diffNs * 1.f) / U_TIME_1MS_IN_NS);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }

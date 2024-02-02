@@ -784,9 +784,11 @@ void VkHelper::createBuffer(VkPhysicalDeviceMemoryProperties physicalMemoType, V
     createBufferInternal(physicalMemoType, device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                          dataSize, &stagingBuffer, &stagingMemo);
-    void *data_ptr;
-    CALL_VK(vkMapMemory(device, stagingMemo, 0, dataSize, 0, &data_ptr));
-    memcpy(data_ptr, data, (size_t) dataSize);
+    if(data){
+        void *data_ptr;
+        CALL_VK(vkMapMemory(device, stagingMemo, 0, dataSize, 0, &data_ptr));
+        memcpy(data_ptr, data, (size_t) dataSize);
+    }
 
     createBufferInternal(physicalMemoType, device, usage, memProps, dataSize, outBuffer, outMemory);
     copyBuffer(device, cmdPool, queue, stagingBuffer, *outBuffer, dataSize);

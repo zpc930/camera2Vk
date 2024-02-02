@@ -23,7 +23,6 @@ struct VkCameraImage{
         VkImageView mImgView = VK_NULL_HANDLE;
         VkSampler mSampler = VK_NULL_HANDLE;
     } uvImg;
-    size_t mDataSize = 0;
 };
 
 class VkCameraImageV2{
@@ -31,7 +30,7 @@ public:
     VkCameraImageV2(VkBundle *vk);
     ~VkCameraImageV2();
     void init();
-    void updateImg(uint64_t frameIndex, uint32_t eyeIndex, const AImage *image);
+    void updateImg(uint32_t eyeIndex, const AImage *image);
     VkImageView getImgView(uint16_t eyeIndex, YuvPlane plane);
     VkSampler getSampler(uint16_t eyeIndex, YuvPlane plane);
 private:
@@ -42,6 +41,8 @@ private:
     VkBundle *mVkBundle;
     VkCameraImage mCameraImages[2];
 
-    VkBuffer mImgBuffer;
-    VkDeviceMemory mImgBufferMemory;
+    VkBuffer mBufferY;
+    VkDeviceMemory mBufferMemoryY;
+    VkBuffer mBufferUV;
+    VkDeviceMemory mBufferMemoryUV;
 };
