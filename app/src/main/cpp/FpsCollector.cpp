@@ -1,7 +1,3 @@
-/*****************************************************************************
-* @copyright Copyright (c) 2023, ThunderSoft Technologies, Inc.
-* All Rights Reserved Confidential and Proprietary - ThunderSoft Technologies, Inc.
-******************************************************************************/
 #include "FpsCollector.h"
 #include "Common.h"
 
