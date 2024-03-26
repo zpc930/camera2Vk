@@ -1,9 +1,5 @@
-/*****************************************************************************
-* @copyright Copyright (c) 2023, ThunderSoft Technologies, Inc.
-* All Rights Reserved Confidential and Proprietary - ThunderSoft Technologies, Inc.
-******************************************************************************/
-#ifndef TXR_RENDER_FPS_COLLECTOR_H
-#define TXR_RENDER_FPS_COLLECTOR_H
+#ifndef FPS_COLLECTOR_H
+#define FPS_COLLECTOR_H
 
 #include <ctime>
 #include "stdio.h"
@@ -30,4 +26,4 @@ public:
 };
 
 
-#endif //TXR_RENDER_FPS_COLLECTOR_H
+#endif //FPS_COLLECTOR_H
